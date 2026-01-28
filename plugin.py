@@ -4,10 +4,11 @@ from Screens.Screen import Screen
 from Components.MenuList import MenuList
 from Components.ActionMap import ActionMap
 from Components.Sources.StaticText import StaticText
-from Components.Button import Button
-from enigma import eServiceReference, eSystemInfo
+from Screens.ChoiceBox import ChoiceBox
+from enigma import eServiceReference
 import requests
 from bs4 import BeautifulSoup
+import re
 
 URL = "https://www.satelliweb.com/index.php?section=livef"
 
@@ -21,26 +22,39 @@ def getFeeds():
         soup = BeautifulSoup(r.text, "html.parser")
         feed_divs = soup.find_all("div", class_="feed")
 
+        if not feed_divs:
+            print("Warning: feed structure might have changed!")
+
         for div in feed_divs:
+            text = div.get_text(separator="\n").strip()
+            lines = [line.strip() for line in text.split("\n") if line.strip()]
+
             feed = {}
-            feed["sat"] = div.find("span", class_="sat").text.strip() if div.find("span", class_="sat") else "Unknown"
 
-            freq_tag = div.find("span", class_="freq")
-            feed["freq"] = int(freq_tag.text.strip()) if freq_tag and freq_tag.text.strip().isdigit() else 0
+            # القمر
+            feed["sat"] = lines[0] if len(lines) > 0 else "Unknown"
 
-            feed["pol"] = div.find("span", class_="pol").text.strip() if div.find("span", class_="pol") else "H"
+            # التردد + Pol + SR + FEC
+            match = re.search(r"Frequency:\s*(\d+)\s*-\s*Pol:\s*([HV])\s*-\s*SR:\s*(\d+)\s*-\s*FEC:\s*([\w/]+|-)", text)
+            if match:
+                feed["freq"] = int(match.group(1))
+                feed["pol"] = match.group(2)
+                feed["sr"] = int(match.group(3))
+                feed["fec"] = match.group(4) if match.group(4) != '-' else 'Auto'
+            else:
+                feed["freq"] = feed["sr"] = 0
+                feed["pol"] = "H"
+                feed["fec"] = "Auto"
 
-            sr_tag = div.find("span", class_="sr")
-            feed["sr"] = int(sr_tag.text.strip()) if sr_tag and sr_tag.text.strip().isdigit() else 0
+            # الفئة
+            match_cat = re.search(r"Category:\s*(.+)", text)
+            feed["category"] = match_cat.group(1) if match_cat else "N/A"
 
-            feed["fec"] = div.find("span", class_="fec").text.strip() if div.find("span", class_="fec") else "Auto"
+            # الحدث
+            feed["event"] = lines[-1] if len(lines) > 1 else ""
 
-            enc_tag = div.find("span", class_="enc")
-            feed["encrypted"] = "crypté" in enc_tag.text.lower() or "encrypted" in enc_tag.text.lower() if enc_tag else False
-
-            feed["category"] = div.find("span", class_="category").text.strip() if div.find("span", class_="category") else "N/A"
-
-            feed["event"] = div.find("span", class_="event").text.strip() if div.find("span", class_="event") else ""
+            # مشفر/FTA (نفترض FTA لأن الموقع الجديد لا يحدد)
+            feed["encrypted"] = False
 
             feeds.append(feed)
 
@@ -69,7 +83,6 @@ class FeedsScreen(Screen):
         self["list"] = MenuList(self.list)
         self["status"] = StaticText("Ready")
         self["buttons"] = StaticText("Filters: [F1]FTA  [F2]By Sat  [F3]By Category")
-
         self["actions"] = ActionMap(
             ["OkCancelActions", "DirectionActions", "ColorActions"],
             {
@@ -83,7 +96,6 @@ class FeedsScreen(Screen):
             },
             -1
         )
-
         self.loadFeeds()
 
     def loadFeeds(self):
@@ -92,7 +104,6 @@ class FeedsScreen(Screen):
             self["status"].setText("No feeds found.")
             self["list"].setList([])
             return
-
         for f in self.filtered_feeds:
             txt = "%s | %d %s %d | %s" % (
                 f["sat"],
@@ -115,24 +126,26 @@ class FeedsScreen(Screen):
         self.loadFeeds()
 
     def filterSat(self):
-        sats = list({f["sat"] for f in self.all_feeds})
+        sats = sorted(list({f["sat"] for f in self.all_feeds}))
         if not sats:
             return
-        # نختار أول قمر كفلتر مؤقت (ممكن تطور لاحقاً لاختيار المستخدم)
-        selected_sat = sats[0]
-        self.filtered_feeds = [f for f in self.all_feeds if f["sat"] == selected_sat]
-        self["status"].setText(f"Filtered: Sat {selected_sat}")
-        self.loadFeeds()
+        def onSelect(choice):
+            if choice is not None:
+                self.filtered_feeds = [f for f in self.all_feeds if f["sat"] == choice]
+                self["status"].setText(f"Filtered: Sat {choice}")
+                self.loadFeeds()
+        self.session.openWithCallback(onSelect, ChoiceBox, title="Select Satellite", list=sats)
 
     def filterCategory(self):
-        categories = list({f["category"] for f in self.all_feeds})
+        categories = sorted(list({f["category"] for f in self.all_feeds}))
         if not categories:
             return
-        # نختار أول فئة كفلتر مؤقت (ممكن تطور لاحقاً لاختيار المستخدم)
-        selected_cat = categories[0]
-        self.filtered_feeds = [f for f in self.all_feeds if f["category"] == selected_cat]
-        self["status"].setText(f"Filtered: Category {selected_cat}")
-        self.loadFeeds()
+        def onSelect(choice):
+            if choice is not None:
+                self.filtered_feeds = [f for f in self.all_feeds if f["category"] == choice]
+                self["status"].setText(f"Filtered: Category {choice}")
+                self.loadFeeds()
+        self.session.openWithCallback(onSelect, ChoiceBox, title="Select Category", list=categories)
 
     # ==============================
     # تشغيل التردد
@@ -140,27 +153,27 @@ class FeedsScreen(Screen):
     def tuneFeed(self):
         feed = self["list"].getCurrent()[1]
         self["status"].setText("Tuning...")
-
         try:
             pol_map = {"H": 0, "V": 1}
             pol = pol_map.get(feed["pol"].upper(), 0)
             freq = feed["freq"]
             sr = feed["sr"]
-            fec_map = {
-                "1/2": 2, "2/3": 3, "3/4": 4, "5/6": 5, "7/8": 6,
-                "Auto": 0
-            }
+            fec_map = {"1/2": 2, "2/3": 3, "3/4": 4, "5/6": 5, "7/8": 6, "Auto": 0}
             fec = fec_map.get(feed["fec"], 0)
-
             ref_str = "1:0:1:%d:%d:%d:%d:0:0:0:" % (freq, pol, sr, fec)
             ref = eServiceReference(ref_str)
-
             self.session.nav.playService(ref)
             self["status"].setText("Tuned to %d %s" % (freq, feed["pol"]))
-
         except Exception as e:
-            self["status"].setText("Error tuning feed. Your image may not support it.")
-            print("Error tuning feed:", e)
+            # fallback attempt for images that may not support direct tuning
+            try:
+                ref_str = "1:0:19:%d:%d:%d:%d:0:0:0:" % (freq, pol, sr, fec)
+                ref = eServiceReference(ref_str)
+                self.session.nav.playService(ref)
+                self["status"].setText("Tuned (fallback) to %d %s" % (freq, feed["pol"]))
+            except:
+                self["status"].setText("Error tuning feed. Your image may not support it.")
+                print("Error tuning feed:", e)
 
 # ==============================
 # دخول البلجن من Menu
