@@ -121,7 +121,7 @@ def main(session, **kwargs):
 def Plugins(**kwargs):
     return [
         PluginDescriptor(
-            name="Satelliweb Live Feeds",
+            name="Live Feeds",
             description="Live Satellite Feeds from Satelliweb",
             where=PluginDescriptor.WHERE_PLUGINMENU,
             fnc=main
