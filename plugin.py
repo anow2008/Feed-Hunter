@@ -1,58 +1,44 @@
-
 # -*- coding: utf-8 -*-
 from Plugins.Plugin import PluginDescriptor
 from Screens.Screen import Screen
 from Components.MenuList import MenuList
 from Components.ActionMap import ActionMap
+from enigma import eServiceReference
 import requests
-import re
+from bs4 import BeautifulSoup
 
 URL = "https://www.satelliweb.com/index.php?section=livef"
 
 # ==============================
-# Parser للبيانات
+# Parser للبيانات باستخدام BeautifulSoup
 # ==============================
 def getFeeds():
     feeds = []
     try:
         r = requests.get(URL, timeout=10)
-        text = r.text
+        soup = BeautifulSoup(r.text, "html.parser")
+        feed_divs = soup.find_all("div", class_="feed")
 
-        # تقسيم الصفحة على كل block لكل feed
-        blocks = re.findall(r'(?:Eutelsat.*?ℹW:.*?)(?=<)', text, flags=re.DOTALL)
-
-        for b in blocks:
+        for div in feed_divs:
             feed = {}
-            # القمر
-            sat = re.search(r'\(([\d\.]+°[EW])\)', b)
-            feed["sat"] = sat.group(1) if sat else "Unknown"
+            feed["sat"] = div.find("span", class_="sat").text.strip() if div.find("span", class_="sat") else "Unknown"
 
-            # التردد
-            freq = re.search(r'Frequency:\s*(\d+)', b)
-            feed["freq"] = int(freq.group(1)) if freq else 0
+            freq_tag = div.find("span", class_="freq")
+            feed["freq"] = int(freq_tag.text.strip()) if freq_tag and freq_tag.text.strip().isdigit() else 0
 
-            # Polarisation
-            pol = re.search(r'Pol:\s*([HV])', b)
-            feed["pol"] = pol.group(1) if pol else "H"
+            feed["pol"] = div.find("span", class_="pol").text.strip() if div.find("span", class_="pol") else "H"
 
-            # Symbol Rate
-            sr = re.search(r'SR:\s*(\d+)', b)
-            feed["sr"] = int(sr.group(1)) if sr else 0
+            sr_tag = div.find("span", class_="sr")
+            feed["sr"] = int(sr_tag.text.strip()) if sr_tag and sr_tag.text.strip().isdigit() else 0
 
-            # FEC
-            fec = re.search(r'FEC:\s*([^\n\r]*)', b)
-            feed["fec"] = fec.group(1).strip() if fec else "Auto"
+            feed["fec"] = div.find("span", class_="fec").text.strip() if div.find("span", class_="fec") else "Auto"
 
-            # التشفير
-            feed["encrypted"] = "crypté" in b.lower() or "encrypted" in b.lower()
+            enc_tag = div.find("span", class_="enc")
+            feed["encrypted"] = "crypté" in enc_tag.text.lower() or "encrypted" in enc_tag.text.lower() if enc_tag else False
 
-            # Category
-            cat = re.search(r'Category:\s*([^\n\r]+)', b)
-            feed["category"] = cat.group(1).strip() if cat else "N/A"
+            feed["category"] = div.find("span", class_="category").text.strip() if div.find("span", class_="category") else "N/A"
 
-            # Event name
-            event = re.search(r'ℹW:(.+)', b)
-            feed["event"] = event.group(1).strip() if event else ""
+            feed["event"] = div.find("span", class_="event").text.strip() if div.find("span", class_="event") else ""
 
             feeds.append(feed)
 
@@ -92,7 +78,6 @@ class FeedsScreen(Screen):
     def loadFeeds(self):
         feeds = getFeeds()
         for f in feeds:
-            # السطر الرئيسي
             txt = "%s | %d %s %d | %s" % (
                 f["sat"],
                 f["freq"],
@@ -100,17 +85,34 @@ class FeedsScreen(Screen):
                 f["sr"],
                 "Encrypted" if f["encrypted"] else "FTA"
             )
-            # تفاصيل الحدث
             details = "%s\n%s" % (f["category"], f["event"])
             self.list.append(((txt, details), f))
         self["list"].setList(self.list)
 
     def tuneFeed(self):
         feed = self["list"].getCurrent()[1]
-        print("TUNING TO:", feed)
-        # هنا ممكن تضيف التردد مباشرة إلى الـ frontend
-        # مثال: self.session.nav.playService(...) 
-        # أو blind scan على التردد
+
+        # -------------------------
+        # إعداد ServiceReference للتردد
+        # -------------------------
+        # الصيغة: '1:0:1:frequency:polarization:symbolrate:fec:...'
+        # polarization: H=0, V=1
+        pol_map = {"H": 0, "V": 1}
+        pol = pol_map.get(feed["pol"].upper(), 0)
+        freq = feed["freq"]
+        sr = feed["sr"]
+        fec_map = {
+            "1/2": 2, "2/3": 3, "3/4": 4, "5/6": 5, "7/8": 6,
+            "Auto": 0
+        }
+        fec = fec_map.get(feed["fec"], 0)
+
+        # إنشاء ServiceReference
+        ref_str = "1:0:1:%d:%d:%d:%d:0:0:0:" % (freq, pol, sr, fec)
+        ref = eServiceReference(ref_str)
+
+        # تشغيل التردد على الرسيفر
+        self.session.nav.playService(ref)
 
 # ==============================
 # دخول البلجن من Menu
