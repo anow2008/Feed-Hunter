@@ -16,10 +16,8 @@ read -p "Choose an option (1 or 2): " OPTION
 
 install_plugin() {
     echo "Installing / Updating $PLUGIN_NAME..."
-    # حذف نسخة قديمة لو موجودة مؤقتاً قبل التحديث
     mkdir -p "$PLUGIN_DIR"
 
-    # استخدام git إذا موجود
     if command -v git >/dev/null 2>&1; then
         if [ -d "$PLUGIN_DIR/.git" ]; then
             echo "Updating existing Git repo..."
@@ -30,7 +28,6 @@ install_plugin() {
             git clone "$REMOTE_REPO" "$PLUGIN_DIR"
         fi
     else
-        # fallback: تحميل zip
         echo "Git not found. Using ZIP download..."
         TMP_ZIP="/tmp/feedhunter.zip"
         wget -q "$REMOTE_REPO/archive/refs/heads/main.zip" -O "$TMP_ZIP"
@@ -39,8 +36,9 @@ install_plugin() {
         cp -r /tmp/Feed-Hunter-main/* "$PLUGIN_DIR"
     fi
 
-    # ضبط الصلاحيات
-    chmod -R 755 "$PLUGIN_DIR"
+    # ضبط الصلاحيات بشكل آمن
+    find "$PLUGIN_DIR" -type d -exec chmod 755 {} \;
+    find "$PLUGIN_DIR" -type f -exec chmod 644 {} \;
 
     echo "$PLUGIN_NAME installed/updated successfully!"
     echo "Restart Enigma2 or reload plugins to see it in the menu."
