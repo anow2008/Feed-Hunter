@@ -65,14 +65,20 @@ def getFeeds():
 # MultiContent Entry
 # ==================================================
 def FeedEntry(feed):
-    line1 = "%s | %d %s %d | FTA" % (
-        feed["sat"], feed["freq"], feed["pol"], feed["sr"]
-    )
-    line2 = "%s - %s" % (feed["category"], feed["event"])
     return [
         feed,
-        MultiContentEntryText(pos=(10, 5), size=(950, 30), font=0, text=line1),
-        MultiContentEntryText(pos=(10, 35), size=(950, 25), font=1, text=line2),
+        MultiContentEntryText(
+            pos=(10, 5), size=(860, 30),
+            font=0,
+            text="%s | %d %s %d | FTA" % (
+                feed["sat"], feed["freq"], feed["pol"], feed["sr"]
+            )
+        ),
+        MultiContentEntryText(
+            pos=(10, 35), size=(860, 25),
+            font=1,
+            text="%s - %s" % (feed["category"], feed["event"])
+        ),
     ]
 
 # ==================================================
@@ -80,33 +86,38 @@ def FeedEntry(feed):
 # ==================================================
 class FeedsScreen(Screen):
     skin = """
-    <screen name="FeedsScreen" title="Satelliweb Live Feeds" position="0,0" size="1000,600">
-        <widget name="list" position="10,10" size="980,460" scrollbarMode="showOnDemand"/>
-        <widget name="status" position="10,480" size="980,25" font="Regular;20"/>
-        <ePixmap pixmap="buttons/red.png" position="10,520" size="35,25" alphatest="on"/>
-        <widget name="key_red" position="50,520" size="150,25" font="Regular;20"/>
-        <ePixmap pixmap="buttons/green.png" position="210,520" size="35,25" alphatest="on"/>
-        <widget name="key_green" position="250,520" size="150,25" font="Regular;20"/>
-        <ePixmap pixmap="buttons/yellow.png" position="410,520" size="35,25" alphatest="on"/>
-        <widget name="key_yellow" position="450,520" size="200,25" font="Regular;20"/>
+    <screen name="FeedsScreen" title="Feed-Hunter"
+            position="center,center" size="900,550">
+
+        <widget name="list"
+                position="10,10"
+                size="880,450"
+                scrollbarMode="showOnDemand" />
+
+        <widget name="status"
+                position="10,470"
+                size="880,30"
+                font="Regular;20" />
+
     </screen>
     """
 
     def __init__(self, session):
         Screen.__init__(self, session)
+
         self.all_feeds = getFeeds()
         self.filtered_feeds = self.all_feeds[:]
 
-        self["list"] = MenuList([], enableWrapAround=True,
-                                content=eListboxPythonMultiContent)
+        self["list"] = MenuList(
+            [],
+            enableWrapAround=True,
+            content=eListboxPythonMultiContent
+        )
         self["list"].l.setItemHeight(65)
         self["list"].l.setFont(0, gFont("Regular", 22))
         self["list"].l.setFont(1, gFont("Regular", 18))
 
         self["status"] = StaticText("Ready")
-        self["key_red"] = StaticText("FTA")
-        self["key_green"] = StaticText("Satellite")
-        self["key_yellow"] = StaticText("Category")
 
         self["actions"] = ActionMap(
             ["OkCancelActions", "DirectionActions", "ColorActions"], {
@@ -119,12 +130,16 @@ class FeedsScreen(Screen):
                 "yellow": self.filterCategory,
             }, -1
         )
+
         self.loadFeeds()
 
     def loadFeeds(self):
         self["list"].setList([FeedEntry(f) for f in self.filtered_feeds])
         self["status"].setText("Feeds: %d" % len(self.filtered_feeds))
 
+    # ------------------
+    # Filters
+    # ------------------
     def filterFTA(self):
         self.filtered_feeds = [f for f in self.all_feeds if not f["encrypted"]]
         self.loadFeeds()
@@ -148,11 +163,16 @@ class FeedsScreen(Screen):
             self.filtered_feeds = [f for f in self.all_feeds if f[key] == value]
             self.loadFeeds()
 
+    # ------------------
+    # Tune
+    # ------------------
     def tuneFeed(self):
         feed = self["list"].getCurrent()[0]
         try:
             pol = 0 if feed["pol"] == "H" else 1
-            fec = {"1/2": 2, "2/3": 3, "3/4": 4, "5/6": 5, "7/8": 6}.get(feed["fec"], 0)
+            fec = {"1/2": 2, "2/3": 3, "3/4": 4,
+                   "5/6": 5, "7/8": 6}.get(feed["fec"], 0)
+
             ref = eServiceReference(
                 "1:0:1:%d:%d:%d:%d:0:0:0:" %
                 (feed["freq"], pol, feed["sr"], fec)
@@ -170,8 +190,9 @@ def main(session, **kwargs):
 
 def Plugins(**kwargs):
     return PluginDescriptor(
-        name="Live Feeds (Satelliweb)",
-        description="Professional Live Feeds Viewer",
+        name="Feed-Hunter",
+        description="Live Satellite Feeds Viewer",
         where=PluginDescriptor.WHERE_PLUGINMENU,
+        icon="icon.png",
         fnc=main
     )
