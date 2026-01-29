@@ -187,6 +187,7 @@ def Plugins(**kwargs):
             name="Live Feeds",
             description="Live Satellite Feeds from Satelliweb with Filters",
             where=PluginDescriptor.WHERE_PLUGINMENU,
+            icon="icon.png",
             fnc=main
         )
     ]
