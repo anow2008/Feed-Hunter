@@ -9,7 +9,8 @@ from Components.MultiContent import MultiContentEntryText
 from enigma import (
     eServiceReference,
     eListboxPythonMultiContent,
-    gFont
+    gFont,
+    gRGB
 )
 import requests
 from bs4 import BeautifulSoup
@@ -37,9 +38,11 @@ def getFeeds():
                 "fec": "Auto",
                 "category": "N/A",
                 "event": lines[-1] if len(lines) > 1 else "",
-                "encrypted": False
+                "encrypted": False,
+                "encryption": "FTA"  # افتراضي FTA
             }
 
+            # Parsing details
             m = re.search(
                 r"Frequency:\s*(\d+)\s*-\s*Pol:\s*([HV])\s*-\s*SR:\s*(\d+)\s*-\s*FEC:\s*([\w/]+|-)",
                 text
@@ -56,22 +59,32 @@ def getFeeds():
             if c:
                 feed["category"] = c.group(1)
 
+            # أي feed مشفر → BISS
+            if re.search(r"Encrypted|Scrambled|BISS|PowerVu", text, re.I):
+                feed["encrypted"] = True
+                feed["encryption"] = "BISS"
+
             feeds.append(feed)
     except Exception as e:
         print("Feed error:", e)
     return feeds
 
 # ==================================================
-# MultiContent Entry
+# MultiContent Entry with color
 # ==================================================
 def FeedEntry(feed):
+    # تحديد اللون حسب نوع التشفير
+    color = gRGB(0, 255, 0) if feed["encryption"] == "FTA" else gRGB(255, 0, 0)
+
     return [
         feed,
         MultiContentEntryText(
             pos=(10, 5), size=(860, 30),
             font=0,
-            text="%s | %d %s %d | FTA" % (
-                feed["sat"], feed["freq"], feed["pol"], feed["sr"]
+            flags=0,
+            color=color,
+            text="%s | %d %s %d | %s" % (
+                feed["sat"], feed["freq"], feed["pol"], feed["sr"], feed["encryption"]
             )
         ),
         MultiContentEntryText(
@@ -160,6 +173,7 @@ class FeedsScreen(Screen):
 
     def applyFilter(self, key, value):
         if value:
+            value = value[0]  # ChoiceBox بيرجع tuple
             self.filtered_feeds = [f for f in self.all_feeds if f[key] == value]
             self.loadFeeds()
 
