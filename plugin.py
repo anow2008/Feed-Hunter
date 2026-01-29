@@ -60,9 +60,9 @@ def getFeeds():
                 feed["category"] = c.group(1)
 
             # أي feed مشفر → BISS
-            if re.search(r"Encrypted|Scrambled|BISS|PowerVu", text, re.I):
+            if re.search(r"Encrypted|Scrambled|BISS|PowerVu|crypté|crypt", text, re.I):
                 feed["encrypted"] = True
-                feed["encryption"] = "BISS"
+                feed["encryption"] = "BISS/Crypt"
 
             feeds.append(feed)
     except Exception as e:
