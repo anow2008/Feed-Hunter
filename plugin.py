@@ -10,7 +10,9 @@ from enigma import (
     eServiceReference,
     eListboxPythonMultiContent,
     gFont,
-    gRGB
+    gRGB,
+    eTimer,
+    eDVBFrontendParametersSatellite
 )
 import requests
 from bs4 import BeautifulSoup
@@ -26,6 +28,7 @@ def getFeeds():
     try:
         r = requests.get(URL, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
+
         for div in soup.find_all("div", class_="feed"):
             text = div.get_text(separator="\n").strip()
             lines = [l.strip() for l in text.split("\n") if l.strip()]
@@ -39,10 +42,9 @@ def getFeeds():
                 "category": "N/A",
                 "event": lines[-1] if len(lines) > 1 else "",
                 "encrypted": False,
-                "encryption": "FTA"  # افتراضي FTA
+                "encryption": "FTA"
             }
 
-            # Parsing details
             m = re.search(
                 r"Frequency:\s*(\d+)\s*-\s*Pol:\s*([HV])\s*-\s*SR:\s*(\d+)\s*-\s*FEC:\s*([\w/]+|-)",
                 text
@@ -59,32 +61,33 @@ def getFeeds():
             if c:
                 feed["category"] = c.group(1)
 
-            # أي feed مشفر → BISS
+            # تشفير
             if re.search(r"Encrypted|Scrambled|BISS|PowerVu|crypté|crypt", text, re.I):
                 feed["encrypted"] = True
-                feed["encryption"] = "BISS/Crypt"
+                feed["encryption"] = "Encrypted"
 
             feeds.append(feed)
+
     except Exception as e:
         print("Feed error:", e)
+
     return feeds
 
 # ==================================================
-# MultiContent Entry with color
+# List Entry
 # ==================================================
 def FeedEntry(feed):
-    # تحديد اللون حسب نوع التشفير
-    color = gRGB(0, 255, 0) if feed["encryption"] == "FTA" else gRGB(255, 0, 0)
+    color = gRGB(0, 200, 0) if not feed["encrypted"] else gRGB(220, 0, 0)
 
     return [
         feed,
         MultiContentEntryText(
             pos=(10, 5), size=(860, 30),
             font=0,
-            flags=0,
             color=color,
             text="%s | %d %s %d | %s" % (
-                feed["sat"], feed["freq"], feed["pol"], feed["sr"], feed["encryption"]
+                feed["sat"], feed["freq"], feed["pol"],
+                feed["sr"], feed["encryption"]
             )
         ),
         MultiContentEntryText(
@@ -101,25 +104,18 @@ class FeedsScreen(Screen):
     skin = """
     <screen name="FeedsScreen" title="Feed-Hunter"
             position="center,center" size="900,550">
-
-        <widget name="list"
-                position="10,10"
-                size="880,450"
-                scrollbarMode="showOnDemand" />
-
-        <widget name="status"
-                position="10,470"
-                size="880,30"
-                font="Regular;20" />
-
+        <widget name="list" position="10,10"
+                size="880,450" scrollbarMode="showOnDemand" />
+        <widget name="status" position="10,470"
+                size="880,30" font="Regular;20" />
     </screen>
     """
 
     def __init__(self, session):
         Screen.__init__(self, session)
 
-        self.all_feeds = getFeeds()
-        self.filtered_feeds = self.all_feeds[:]
+        self.all_feeds = []
+        self.filtered_feeds = []
 
         self["list"] = MenuList(
             [],
@@ -130,7 +126,7 @@ class FeedsScreen(Screen):
         self["list"].l.setFont(0, gFont("Regular", 22))
         self["list"].l.setFont(1, gFont("Regular", 18))
 
-        self["status"] = StaticText("Ready")
+        self["status"] = StaticText("Loading feeds...")
 
         self["actions"] = ActionMap(
             ["OkCancelActions", "DirectionActions", "ColorActions"], {
@@ -144,6 +140,17 @@ class FeedsScreen(Screen):
             }, -1
         )
 
+        # تحميل بدون تجميد
+        self.timer = eTimer()
+        self.timer.callback.append(self.loadFeedsAsync)
+        self.timer.start(100, True)
+
+    # ------------------
+    # Async Load
+    # ------------------
+    def loadFeedsAsync(self):
+        self.all_feeds = getFeeds()
+        self.filtered_feeds = self.all_feeds[:]
         self.loadFeeds()
 
     def loadFeeds(self):
@@ -173,27 +180,47 @@ class FeedsScreen(Screen):
 
     def applyFilter(self, key, value):
         if value:
-            value = value[0]  # ChoiceBox بيرجع tuple
+            value = value[0]
             self.filtered_feeds = [f for f in self.all_feeds if f[key] == value]
             self.loadFeeds()
 
     # ------------------
-    # Tune
+    # Tune (AUTO DVB-S / S2)
     # ------------------
     def tuneFeed(self):
-        feed = self["list"].getCurrent()[0]
+        cur = self["list"].getCurrent()
+        if not cur:
+            return
+
+        feed = cur[0]
+
         try:
-            pol = 0 if feed["pol"] == "H" else 1
-            fec = {"1/2": 2, "2/3": 3, "3/4": 4,
-                   "5/6": 5, "7/8": 6}.get(feed["fec"], 0)
+            fe = eDVBFrontendParametersSatellite()
+            fe.frequency = feed["freq"] * 1000
+            fe.symbol_rate = feed["sr"] * 1000
+            fe.polarisation = (
+                eDVBFrontendParametersSatellite.Polarisation_Horizontal
+                if feed["pol"] == "H"
+                else eDVBFrontendParametersSatellite.Polarisation_Vertical
+            )
+
+            fe.fec = eDVBFrontendParametersSatellite.FEC_Auto
+            fe.inversion = eDVBFrontendParametersSatellite.Inversion_Unknown
+            fe.system = eDVBFrontendParametersSatellite.System_Auto
+            fe.modulation = eDVBFrontendParametersSatellite.Modulation_Auto
+            fe.orbital_position = 0
 
             ref = eServiceReference(
-                "1:0:1:%d:%d:%d:%d:0:0:0:" %
-                (feed["freq"], pol, feed["sr"], fec)
+                eServiceReference.idDVB,
+                eServiceReference.flagDirectory,
+                0
             )
+            ref.setData(0, fe)
+
             self.session.nav.playService(ref)
             self["status"].setText("Tuned successfully")
-        except:
+
+        except Exception as e:
             self["status"].setText("Tuning failed")
 
 # ==================================================
