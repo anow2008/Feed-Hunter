@@ -1,16 +1,16 @@
-
 # -*- coding: utf-8 -*-
 from Plugins.Plugin import PluginDescriptor
 from Screens.Screen import Screen
 from Screens.ChoiceBox import ChoiceBox
+from Screens.MessageBox import MessageBox
 from Components.ActionMap import ActionMap
 from Components.MenuList import MenuList
 from Components.Sources.StaticText import StaticText
 from Components.MultiContent import MultiContentEntryText
-from Screens.MessageBox import MessageBox
 from enigma import (
     eServiceReference,
     eListboxPythonMultiContent,
+    eDVBFrontendParametersSatellite,
     gFont,
     gRGB
 )
@@ -63,13 +63,14 @@ def getFeeds():
                 feed["freq"] = int(m.group(1))
                 feed["pol"] = m.group(2)
                 feed["sr"] = int(m.group(3))
-                feed["fec"] = m.group(4)
+                feed["fec"] = m.group(4) if m.group(4) != "-" else "Auto"
 
             c = re.search(r"Category:\s*(.+)", text)
             if c:
                 feed["category"] = c.group(1)
 
-            if re.search(r"Encrypted|Scrambled|BISS|PowerVu|crypt", text, re.I):
+            # ---- Encryption detection (UPDATED) ----
+            if re.search(r"Encrypted|Scrambled|BISS|PowerVu|crypté|crypt", text, re.I):
                 feed["encrypted"] = True
                 feed["encryption"] = "BISS/Crypt"
 
@@ -93,8 +94,9 @@ def FeedEntry(feed):
             font=0,
             color=color,
             text="%s | %d %s %d | %s" % (
-                feed["sat"], feed["freq"], feed["pol"],
-                feed["sr"], feed["encryption"]
+                feed["sat"], feed["freq"],
+                feed["pol"], feed["sr"],
+                feed["encryption"]
             )
         ),
         MultiContentEntryText(
@@ -185,7 +187,7 @@ class FeedsScreen(Screen):
             self.loadFeeds()
 
     # ------------------
-    # Tune (FIXED)
+    # Tune (PROPER DVB)
     # ------------------
     def tuneFeed(self):
         cur = self["list"].getCurrent()
@@ -193,16 +195,49 @@ class FeedsScreen(Screen):
             return
 
         feed = cur[0]
+
         try:
-            pol = 0 if feed["pol"] == "H" else 1
+            pol_map = {
+                "H": eDVBFrontendParametersSatellite.Polarisation_Horizontal,
+                "V": eDVBFrontendParametersSatellite.Polarisation_Vertical
+            }
+
+            fec_map = {
+                "1/2": eDVBFrontendParametersSatellite.FEC_1_2,
+                "2/3": eDVBFrontendParametersSatellite.FEC_2_3,
+                "3/4": eDVBFrontendParametersSatellite.FEC_3_4,
+                "5/6": eDVBFrontendParametersSatellite.FEC_5_6,
+                "7/8": eDVBFrontendParametersSatellite.FEC_7_8,
+                "Auto": eDVBFrontendParametersSatellite.FEC_Auto
+            }
+
+            feparm = eDVBFrontendParametersSatellite()
+            feparm.frequency = feed["freq"] * 1000
+            feparm.symbol_rate = feed["sr"] * 1000
+            feparm.polarisation = pol_map.get(
+                feed["pol"],
+                eDVBFrontendParametersSatellite.Polarisation_Horizontal
+            )
+            feparm.fec = fec_map.get(
+                feed["fec"],
+                eDVBFrontendParametersSatellite.FEC_Auto
+            )
+            feparm.inversion = eDVBFrontendParametersSatellite.Inversion_Unknown
+            feparm.system = eDVBFrontendParametersSatellite.System_DVB_S
+            feparm.modulation = eDVBFrontendParametersSatellite.Modulation_QPSK
+            feparm.orbital_position = 0
 
             ref = eServiceReference(
-                "1:0:1:%d:%d:%d:0:0:0:0:" %
-                (feed["freq"], pol, feed["sr"])
+                eServiceReference.idDVB,
+                eServiceReference.flagDirectory,
+                0
             )
+            ref.setData(0, feparm)
+
             self.session.nav.playService(ref)
             self["status"].setText("Tuned successfully")
-        except Exception as e:
+
+        except Exception:
             self.session.open(
                 MessageBox,
                 "Tuning failed",
