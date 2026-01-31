@@ -21,15 +21,20 @@ if ! ping -c 1 github.com >/dev/null 2>&1; then
     exit 1
 fi
 
-# ---- Detect image ----
-IMAGE="Unknown"
-[ -f /etc/image-version ] && IMAGE=$(grep -i "distro" /etc/image-version | cut -d= -f2)
-[ -z "$IMAGE" ] && IMAGE=$(cat /etc/issue 2>/dev/null | head -n1)
+# ---- Detect image & Python Version ----
+PYTHON_VER=$(python -c 'import sys; print(sys.version_info[0])' 2>/dev/null)
+echo "[+] Detected Python Version: $PYTHON_VER"
 
-echo "[+] Detected Image: $IMAGE"
+# ---- Install Dependencies ----
+echo "[+] Installing required libraries (requests & bs4)..."
+opkg update > /dev/null 2>&1
+if [ "$PYTHON_VER" = "3" ]; then
+    opkg install python3-requests python3-beautifulsoup4
+else
+    opkg install python-requests python-beautifulsoup4
+fi
 
 echo "[+] Installing / Updating $PLUGIN_NAME..."
-
 mkdir -p "$PLUGIN_DIR"
 
 if command -v git >/dev/null 2>&1; then
@@ -44,7 +49,7 @@ if command -v git >/dev/null 2>&1; then
 else
     echo "[+] Git not found, using ZIP method..."
     TMP_ZIP="/tmp/feedhunter.zip"
-    wget -q "$REMOTE_REPO/archive/refs/heads/main.zip" -O "$TMP_ZIP" || exit 1
+    wget --no-check-certificate -q "$REMOTE_REPO/archive/refs/heads/main.zip" -O "$TMP_ZIP" || exit 1
     unzip -o "$TMP_ZIP" -d /tmp >/dev/null 2>&1
     rm -rf "$PLUGIN_DIR"
     mkdir -p "$PLUGIN_DIR"
@@ -61,9 +66,8 @@ find "$PLUGIN_DIR" -type f -name "*.sh" -exec chmod 755 {} \;
 # ---- Restart Enigma2 ----
 echo "[+] Restarting Enigma2..."
 sleep 2
-init 4
-sleep 3
-init 3
+# الطريقة الأسرع لعمل ريستارت بدون تعليق السكربت
+killall -9 enigma2
 
 echo "=============================================="
 echo " Installation completed successfully"
