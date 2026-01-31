@@ -24,7 +24,25 @@ import re
 URL = "https://www.satelliweb.com/index.php?section=livef"
 
 # ==================================================
-# Fetch feeds (NO UI here)
+# Helpers
+# ==================================================
+def satToOrbital(text):
+    """
+    Extract orbital position from satellite name
+    Example: 7.0°E -> 70
+             7.0°W -> 3600 - 70
+    """
+    m = re.search(r"(\d+(?:\.\d+)?)°\s*([EW])", text)
+    if not m:
+        return 0
+
+    pos = int(float(m.group(1)) * 10)
+    if m.group(2) == "W":
+        pos = 3600 - pos
+    return pos
+
+# ==================================================
+# Fetch feeds (Thread safe)
 # ==================================================
 def getFeeds():
     feeds = []
@@ -36,8 +54,11 @@ def getFeeds():
             text = div.get_text("\n").strip()
             lines = [l.strip() for l in text.split("\n") if l.strip()]
 
+            satname = lines[0] if lines else "Unknown"
+
             feed = {
-                "sat": lines[0] if lines else "Unknown",
+                "sat": satname,
+                "orbital": satToOrbital(satname),
                 "freq": 0,
                 "pol": "H",
                 "sr": 0,
@@ -130,26 +151,18 @@ class FeedsScreen(Screen):
             }, -1
         )
 
-        # Timer to safely update UI
         self.uiTimer = eTimer()
         self.uiTimer.callback.append(self.updateUI)
 
-        # Start background thread
         threading.Thread(
             target=self.loadFeedsThread,
             daemon=True
         ).start()
 
-    # ------------------
-    # Thread worker
-    # ------------------
     def loadFeedsThread(self):
         self.feeds = getFeeds()
         self.uiTimer.start(0, True)
 
-    # ------------------
-    # UI update (Main Thread)
-    # ------------------
     def updateUI(self):
         self["list"].setList([FeedEntry(f) for f in self.feeds])
         self["status"].setText(
@@ -174,7 +187,7 @@ class FeedsScreen(Screen):
             "fec_inner": 0,
             "system": 0,
             "modulation": 0,
-            "orbital_position": 0
+            "orbital_position": feed["orbital"]
         }
 
         self.session.open(
@@ -207,7 +220,7 @@ class FeedsScreen(Screen):
             fe.inversion = eDVBFrontendParametersSatellite.Inversion_Unknown
             fe.system = eDVBFrontendParametersSatellite.System_Auto
             fe.modulation = eDVBFrontendParametersSatellite.Modulation_Auto
-            fe.orbital_position = 0
+            fe.orbital_position = feed["orbital"]
 
             ref = eServiceReference(
                 eServiceReference.idDVB,
