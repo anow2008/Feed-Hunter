@@ -15,6 +15,8 @@ from enigma import (
     eTimer,
     eDVBFrontendParametersSatellite
 )
+
+import threading
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -22,12 +24,12 @@ import re
 URL = "https://www.satelliweb.com/index.php?section=livef"
 
 # ==================================================
-# Fetch & Parse Feeds
+# Fetch feeds (NO UI here)
 # ==================================================
 def getFeeds():
     feeds = []
     try:
-        r = requests.get(URL, timeout=10)
+        r = requests.get(URL, timeout=8)
         soup = BeautifulSoup(r.text, "html.parser")
 
         for div in soup.find_all("div", class_="feed"):
@@ -74,20 +76,15 @@ def FeedEntry(feed):
     return [
         feed,
         MultiContentEntryText(
-            pos=(10, 5),
-            size=(860, 30),
+            pos=(10, 5), size=(860, 30),
             font=0,
             color=color,
             text="%s | %d %s %d" % (
-                feed["sat"],
-                feed["freq"],
-                feed["pol"],
-                feed["sr"]
+                feed["sat"], feed["freq"], feed["pol"], feed["sr"]
             )
         ),
         MultiContentEntryText(
-            pos=(10, 35),
-            size=(860, 25),
+            pos=(10, 35), size=(860, 25),
             font=1,
             text=feed["event"]
         ),
@@ -110,6 +107,8 @@ class FeedsScreen(Screen):
     def __init__(self, session):
         Screen.__init__(self, session)
 
+        self.feeds = []
+
         self["list"] = MenuList(
             [],
             enableWrapAround=True,
@@ -131,15 +130,27 @@ class FeedsScreen(Screen):
             }, -1
         )
 
-        self.timer = eTimer()
-        self.timer.callback.append(self.loadFeeds)
-        self.timer.start(100, True)
+        # Timer to safely update UI
+        self.uiTimer = eTimer()
+        self.uiTimer.callback.append(self.updateUI)
+
+        # Start background thread
+        threading.Thread(
+            target=self.loadFeedsThread,
+            daemon=True
+        ).start()
 
     # ------------------
-    # Load feeds (async)
+    # Thread worker
     # ------------------
-    def loadFeeds(self):
+    def loadFeedsThread(self):
         self.feeds = getFeeds()
+        self.uiTimer.start(0, True)
+
+    # ------------------
+    # UI update (Main Thread)
+    # ------------------
+    def updateUI(self):
         self["list"].setList([FeedEntry(f) for f in self.feeds])
         self["status"].setText(
             "OK: Scan | Blue: Watch | Feeds: %d" % len(self.feeds)
