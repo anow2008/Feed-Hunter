@@ -18,8 +18,11 @@ from enigma import (
 
 import threading
 import re
+import json
+import os
 
 URL = "https://www.satelliweb.com/index.php?section=livef"
+CACHE_FILE = "/tmp/feedhunter_cache.json"
 
 # ==================================================
 # Optional libraries (compatibility fix)
@@ -36,12 +39,6 @@ except ImportError:
 # Helpers
 # ==================================================
 def satToOrbital(text):
-    """
-    Extract orbital position from satellite name
-    Example:
-      7.0°E / 7E  -> 70
-      7.0°W / 7W  -> 3600 - 70
-    """
     m = re.search(r"(\d+(?:\.\d+)?)\s*°?\s*([EW])", text)
     if not m:
         return 0
@@ -52,10 +49,32 @@ def satToOrbital(text):
     return pos
 
 # ==================================================
-# Fetch feeds (Thread safe + fallback)
+# Cache helpers
+# ==================================================
+def saveCache(feeds):
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(feeds, f)
+    except Exception as e:
+        print("Cache save error:", e)
+
+
+def loadCache():
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        print("Cache load error:", e)
+    return []
+
+# ==================================================
+# Fetch feeds
 # ==================================================
 def getFeeds():
     feeds = []
+    fromCache = False
+
     try:
         if HAS_BS4:
             r = requests.get(URL, timeout=8)
@@ -106,10 +125,15 @@ def getFeeds():
 
             feeds.append(feed)
 
+        if feeds:
+            saveCache(feeds)
+
     except Exception as e:
         print("Feed error:", e)
+        feeds = loadCache()
+        fromCache = True
 
-    return feeds
+    return feeds, fromCache
 
 # ==================================================
 # List Entry
@@ -124,10 +148,7 @@ def FeedEntry(feed):
             font=0,
             color=color,
             text="%s | %d %s %d" % (
-                feed["sat"],
-                feed["freq"],
-                feed["pol"],
-                feed["sr"]
+                feed["sat"], feed["freq"], feed["pol"], feed["sr"]
             )
         ),
         MultiContentEntryText(
@@ -155,6 +176,7 @@ class FeedsScreen(Screen):
         Screen.__init__(self, session)
 
         self.feeds = []
+        self.fromCache = False
 
         self["list"] = MenuList(
             [],
@@ -171,6 +193,7 @@ class FeedsScreen(Screen):
             ["OkCancelActions", "DirectionActions", "ColorActions"], {
                 "ok": self.openManualScan,
                 "blue": self.quickTune,
+                "red": self.refreshFeeds,
                 "cancel": self.close,
                 "up": self["list"].up,
                 "down": self["list"].down,
@@ -186,13 +209,22 @@ class FeedsScreen(Screen):
         ).start()
 
     def loadFeedsThread(self):
-        self.feeds = getFeeds()
+        self.feeds, self.fromCache = getFeeds()
         self.uiTimer.start(0, True)
+
+    def refreshFeeds(self):
+        self["status"].setText("Refreshing feeds...")
+        threading.Thread(
+            target=self.loadFeedsThread,
+            daemon=True
+        ).start()
 
     def updateUI(self):
         self["list"].setList([FeedEntry(f) for f in self.feeds])
+        src = "Cached" if self.fromCache else "Live"
         self["status"].setText(
-            "OK: Scan | Blue: Watch | Feeds: %d" % len(self.feeds)
+            "OK: Scan | Blue: Watch | Red: Refresh | %s feeds: %d"
+            % (src, len(self.feeds))
         )
 
     # ------------------
