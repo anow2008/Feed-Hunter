@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 from Plugins.Plugin import PluginDescriptor
 from Screens.Screen import Screen
-from Screens.ChoiceBox import ChoiceBox
+from Screens.ServiceScan import ServiceScan
 from Components.ActionMap import ActionMap
 from Components.MenuList import MenuList
 from Components.Sources.StaticText import StaticText
 from Components.MultiContent import MultiContentEntryText
+from Components.NimManager import nimmanager
 from enigma import (
     eServiceReference,
     eListboxPythonMultiContent,
@@ -30,7 +31,7 @@ def getFeeds():
         soup = BeautifulSoup(r.text, "html.parser")
 
         for div in soup.find_all("div", class_="feed"):
-            text = div.get_text(separator="\n").strip()
+            text = div.get_text("\n").strip()
             lines = [l.strip() for l in text.split("\n") if l.strip()]
 
             feed = {
@@ -38,33 +39,24 @@ def getFeeds():
                 "freq": 0,
                 "pol": "H",
                 "sr": 0,
-                "fec": "Auto",
-                "category": "N/A",
                 "event": lines[-1] if len(lines) > 1 else "",
-                "encrypted": False,
-                "encryption": "FTA"
+                "encrypted": False
             }
 
             m = re.search(
-                r"Frequency:\s*(\d+)\s*-\s*Pol:\s*([HV])\s*-\s*SR:\s*(\d+)\s*-\s*FEC:\s*([\w/]+|-)",
+                r"Frequency:\s*(\d+)\s*-\s*Pol:\s*([HV])\s*-\s*SR:\s*(\d+)",
                 text
             )
             if m:
-                feed.update({
-                    "freq": int(m.group(1)),
-                    "pol": m.group(2),
-                    "sr": int(m.group(3)),
-                    "fec": m.group(4) if m.group(4) != "-" else "Auto"
-                })
+                feed["freq"] = int(m.group(1))
+                feed["pol"] = m.group(2)
+                feed["sr"] = int(m.group(3))
 
-            c = re.search(r"Category:\s*(.+)", text)
-            if c:
-                feed["category"] = c.group(1)
-
-            # تشفير
-            if re.search(r"Encrypted|Scrambled|BISS|PowerVu|crypté|crypt", text, re.I):
+            if re.search(
+                r"Encrypted|Scrambled|BISS|PowerVu|crypté|crypt",
+                text, re.I
+            ):
                 feed["encrypted"] = True
-                feed["encryption"] = "Encrypted"
 
             feeds.append(feed)
 
@@ -82,18 +74,22 @@ def FeedEntry(feed):
     return [
         feed,
         MultiContentEntryText(
-            pos=(10, 5), size=(860, 30),
+            pos=(10, 5),
+            size=(860, 30),
             font=0,
             color=color,
-            text="%s | %d %s %d | %s" % (
-                feed["sat"], feed["freq"], feed["pol"],
-                feed["sr"], feed["encryption"]
+            text="%s | %d %s %d" % (
+                feed["sat"],
+                feed["freq"],
+                feed["pol"],
+                feed["sr"]
             )
         ),
         MultiContentEntryText(
-            pos=(10, 35), size=(860, 25),
+            pos=(10, 35),
+            size=(860, 25),
             font=1,
-            text="%s - %s" % (feed["category"], feed["event"])
+            text=feed["event"]
         ),
     ]
 
@@ -114,9 +110,6 @@ class FeedsScreen(Screen):
     def __init__(self, session):
         Screen.__init__(self, session)
 
-        self.all_feeds = []
-        self.filtered_feeds = []
-
         self["list"] = MenuList(
             [],
             enableWrapAround=True,
@@ -130,64 +123,60 @@ class FeedsScreen(Screen):
 
         self["actions"] = ActionMap(
             ["OkCancelActions", "DirectionActions", "ColorActions"], {
-                "ok": self.tuneFeed,
+                "ok": self.openManualScan,
+                "blue": self.quickTune,
                 "cancel": self.close,
                 "up": self["list"].up,
                 "down": self["list"].down,
-                "red": self.filterFTA,
-                "green": self.filterSat,
-                "yellow": self.filterCategory,
             }, -1
         )
 
-        # تحميل بدون تجميد
         self.timer = eTimer()
-        self.timer.callback.append(self.loadFeedsAsync)
+        self.timer.callback.append(self.loadFeeds)
         self.timer.start(100, True)
 
     # ------------------
-    # Async Load
+    # Load feeds (async)
     # ------------------
-    def loadFeedsAsync(self):
-        self.all_feeds = getFeeds()
-        self.filtered_feeds = self.all_feeds[:]
-        self.loadFeeds()
-
     def loadFeeds(self):
-        self["list"].setList([FeedEntry(f) for f in self.filtered_feeds])
-        self["status"].setText("Feeds: %d" % len(self.filtered_feeds))
-
-    # ------------------
-    # Filters
-    # ------------------
-    def filterFTA(self):
-        self.filtered_feeds = [f for f in self.all_feeds if not f["encrypted"]]
-        self.loadFeeds()
-
-    def filterSat(self):
-        sats = sorted({f["sat"] for f in self.all_feeds})
-        self.session.openWithCallback(
-            lambda c: self.applyFilter("sat", c),
-            ChoiceBox, title="Select Satellite", list=sats
+        self.feeds = getFeeds()
+        self["list"].setList([FeedEntry(f) for f in self.feeds])
+        self["status"].setText(
+            "OK: Scan | Blue: Watch | Feeds: %d" % len(self.feeds)
         )
 
-    def filterCategory(self):
-        cats = sorted({f["category"] for f in self.all_feeds})
-        self.session.openWithCallback(
-            lambda c: self.applyFilter("category", c),
-            ChoiceBox, title="Select Category", list=cats
+    # ------------------
+    # OK = Manual Scan
+    # ------------------
+    def openManualScan(self):
+        cur = self["list"].getCurrent()
+        if not cur:
+            return
+
+        feed = cur[0]
+        nim = nimmanager.getNimListOfType("DVB-S")[0]
+
+        transponder = {
+            "frequency": feed["freq"],
+            "symbol_rate": feed["sr"],
+            "polarization": 0 if feed["pol"] == "H" else 1,
+            "fec_inner": 0,
+            "system": 0,
+            "modulation": 0,
+            "orbital_position": 0
+        }
+
+        self.session.open(
+            ServiceScan,
+            nim,
+            transponder=transponder,
+            scanList=[transponder]
         )
 
-    def applyFilter(self, key, value):
-        if value:
-            value = value[0]
-            self.filtered_feeds = [f for f in self.all_feeds if f[key] == value]
-            self.loadFeeds()
-
     # ------------------
-    # Tune (AUTO DVB-S / S2)
+    # Blue = Quick Watch
     # ------------------
-    def tuneFeed(self):
+    def quickTune(self):
         cur = self["list"].getCurrent()
         if not cur:
             return
@@ -203,7 +192,6 @@ class FeedsScreen(Screen):
                 if feed["pol"] == "H"
                 else eDVBFrontendParametersSatellite.Polarisation_Vertical
             )
-
             fe.fec = eDVBFrontendParametersSatellite.FEC_Auto
             fe.inversion = eDVBFrontendParametersSatellite.Inversion_Unknown
             fe.system = eDVBFrontendParametersSatellite.System_Auto
@@ -218,10 +206,10 @@ class FeedsScreen(Screen):
             ref.setData(0, fe)
 
             self.session.nav.playService(ref)
-            self["status"].setText("Tuned successfully")
+            self["status"].setText("Watching (not saved)")
 
-        except Exception as e:
-            self["status"].setText("Tuning failed")
+        except Exception:
+            self["status"].setText("Tune failed")
 
 # ==================================================
 # Plugin Entry
@@ -232,7 +220,7 @@ def main(session, **kwargs):
 def Plugins(**kwargs):
     return PluginDescriptor(
         name="Feed-Hunter",
-        description="Live Satellite Feeds Viewer",
+        description="Feed Scanner + Quick Watch",
         where=PluginDescriptor.WHERE_PLUGINMENU,
         icon="icon.png",
         fnc=main
