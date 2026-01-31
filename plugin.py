@@ -47,10 +47,6 @@ def saveAutoSetting(v):
 # Helpers
 # ==================================================
 def satToOrbital(text):
-    """
-    Supports:
-    19.2E , 19.2°E , 19E , 7W
-    """
     try:
         m = re.search(r"(\d+(?:\.\d+)?)\s*°?\s*([EW])", text, re.I)
         if not m:
@@ -77,7 +73,7 @@ def loadCache():
     return []
 
 # ==================================================
-# Fetch Feeds (Safe Scraper)
+# Fetch Feeds
 # ==================================================
 def getFeeds():
     feeds = []
@@ -97,16 +93,6 @@ def getFeeds():
 
                 satname = lines[0]
 
-                feed = {
-                    "sat": satname,
-                    "orbital": satToOrbital(satname),
-                    "freq": 0,
-                    "pol": "H",
-                    "sr": 0,
-                    "event": lines[-1],
-                    "encrypted": False
-                }
-
                 m = re.search(
                     r"Frequency:\s*(\d+)\s*-\s*Pol:\s*([HV])\s*-\s*SR:\s*(\d+)",
                     text
@@ -114,18 +100,20 @@ def getFeeds():
                 if not m:
                     continue
 
-                feed["freq"] = int(m.group(1))
-                feed["pol"] = m.group(2)
-                feed["sr"] = int(m.group(3))
-
-                if re.search(
-                    r"Encrypted|Scrambled|BISS|PowerVu|crypté|crypt",
-                    text, re.I
-                ):
-                    feed["encrypted"] = True
+                feed = {
+                    "sat": satname,
+                    "orbital": satToOrbital(satname),
+                    "freq": int(m.group(1)),
+                    "pol": m.group(2),
+                    "sr": int(m.group(3)),
+                    "event": lines[-1],
+                    "encrypted": bool(re.search(
+                        r"Encrypted|Scrambled|BISS|PowerVu|crypt",
+                        text, re.I
+                    ))
+                }
 
                 feeds.append(feed)
-
             except:
                 continue
 
@@ -139,11 +127,11 @@ def getFeeds():
     return feeds, fromCache
 
 # ==================================================
-# List Entry
+# List Entry (FIXED)
 # ==================================================
 def FeedEntry(feed):
     color = gRGB(0, 200, 0) if not feed["encrypted"] else gRGB(220, 0, 0)
-    lock = "🔒 " if feed["encrypted"] else "🔓 "
+    lock = "🔓 " if not feed["encrypted"] else "🔒 "
 
     return [
         feed,
@@ -157,7 +145,8 @@ def FeedEntry(feed):
         ),
         MultiContentEntryText(
             pos=(10, 35), size=(860, 25),
-            font=1, text=feed["event"]
+            font=1,
+            text=feed["event"]
         ),
     ]
 
@@ -187,6 +176,7 @@ class FeedsScreen(Screen):
         self["list"].l.setItemHeight(65)
         self["list"].l.setFont(0, gFont("Regular", 22))
         self["list"].l.setFont(1, gFont("Regular", 18))
+        self["list"].l.setBuildFunc(FeedEntry)  # ✅ FIX
 
         self["status"] = StaticText("Loading feeds...")
 
@@ -222,10 +212,8 @@ class FeedsScreen(Screen):
         threading.Thread(target=self.loadFeedsThread, daemon=True).start()
 
     def autoRefresh(self):
-        if not self.autoEnabled:
-            return
-        self["status"].setText("Auto refreshing feeds...")
-        threading.Thread(target=self.loadFeedsThread, daemon=True).start()
+        if self.autoEnabled:
+            threading.Thread(target=self.loadFeedsThread, daemon=True).start()
 
     def toggleAutoRefresh(self):
         self.autoEnabled = not self.autoEnabled
@@ -237,7 +225,7 @@ class FeedsScreen(Screen):
         self.updateUI()
 
     def updateUI(self):
-        self["list"].setList([FeedEntry(f) for f in self.feeds])
+        self["list"].setList(self.feeds)  # ✅ FIX
         src = "Cached" if self.fromCache else "Live"
         auto = "ON" if self.autoEnabled else "OFF"
         self["status"].setText(
@@ -294,7 +282,6 @@ class FeedsScreen(Screen):
                 0
             )
             ref.setData(0, fe)
-
             self.session.nav.playService(ref)
             self["status"].setText("Watching (not saved)")
         except:
@@ -317,7 +304,7 @@ def main(session, **kwargs):
 def Plugins(**kwargs):
     return PluginDescriptor(
         name="Feed-Hunter",
-        description="Feed Scanner + Quick Watch (Python 3)",
+        description="Feed Scanner + Quick Watch (Python3)",
         where=PluginDescriptor.WHERE_PLUGINMENU,
         icon="icon.png",
         fnc=main
