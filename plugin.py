@@ -144,7 +144,7 @@ def getFeeds():
 # ==================================================
 def FeedEntry(feed):
     color = gRGB(0, 200, 0) if not feed["encrypted"] else gRGB(220, 0, 0)
-    lock = "🔓 " if not feed["encrypted"] else "🔒 "
+    lock =  if not feed["encrypted"] else "🔒 "
 
     return [
         feed,
