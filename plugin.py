@@ -14,9 +14,7 @@ from enigma import (
 
 import threading, re, json, os, time
 
-# ==================================================
-# SAFE IMPORTS (NO BLACK SCREEN)
-# ==================================================
+# ================= SAFE IMPORTS =================
 try:
     import requests
 except:
@@ -27,39 +25,14 @@ try:
 except:
     BeautifulSoup = None
 
-# ==================================================
-# CONFIG
-# ==================================================
+# ================= CONFIG =================
 URL = "https://www.satelliweb.com/index.php?section=livef"
 CACHE_FILE = "/tmp/feedhunter_cache.json"
-SETTINGS_FILE = "/etc/enigma2/feedhunter.conf"
-AUTO_REFRESH = 1200000  # 20 minutes
 
-# ==================================================
-# Settings
-# ==================================================
-def loadAutoSetting():
-    try:
-        if os.path.exists(SETTINGS_FILE):
-            for l in open(SETTINGS_FILE):
-                if l.startswith("auto="):
-                    return l.strip().endswith("1")
-    except:
-        pass
-    return True
-
-def saveAutoSetting(v):
-    try:
-        open(SETTINGS_FILE, "w").write("auto=%d" % (1 if v else 0))
-    except:
-        pass
-
-# ==================================================
-# Helpers
-# ==================================================
+# ================= HELPERS =================
 def satToOrbital(text):
     try:
-        m = re.search(r"(\d+(?:\.\d+)?)\s*°?\s*([EW])", text, re.I)
+        m = re.search(r"(\d+(?:\.\d+)?)\s*([EW])", text, re.I)
         if not m:
             return 0
         pos = int(float(m.group(1)) * 10)
@@ -67,27 +40,22 @@ def satToOrbital(text):
     except:
         return 0
 
-def saveCache(feeds):
-    try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(feeds, f)
-    except:
-        pass
-
 def loadCache():
     try:
         if os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE) as f:
-                return json.load(f)
+            return json.load(open(CACHE_FILE))
     except:
         pass
     return []
 
-# ==================================================
-# Fetch Feeds (SAFE)
-# ==================================================
+def saveCache(feeds):
+    try:
+        json.dump(feeds, open(CACHE_FILE, "w"))
+    except:
+        pass
+
+# ================= FETCH =================
 def getFeeds():
-    # لو المكتبات مش موجودة
     if not requests or not BeautifulSoup:
         return [], False
 
@@ -100,35 +68,23 @@ def getFeeds():
         blocks = soup.find_all("div", class_="feed")
 
         for div in blocks:
-            try:
-                text = div.get_text("\n").strip()
-                lines = [l.strip() for l in text.split("\n") if l.strip()]
-                if not lines:
-                    continue
-
-                satname = lines[0]
-
-                m = re.search(
-                    r"Frequency:\s*(\d+)\s*-\s*Pol:\s*([HV])\s*-\s*SR:\s*(\d+)",
-                    text
-                )
-                if not m:
-                    continue
-
-                feeds.append({
-                    "sat": satname,
-                    "orbital": satToOrbital(satname),
-                    "freq": int(m.group(1)),
-                    "pol": m.group(2),
-                    "sr": int(m.group(3)),
-                    "event": lines[-1],
-                    "encrypted": bool(re.search(
-                        r"Encrypted|Scrambled|BISS|PowerVu|crypt",
-                        text, re.I
-                    ))
-                })
-            except:
+            text = div.get_text("\n")
+            m = re.search(
+                r"(\d+(?:\.\d+)?[EW]).*?Frequency:\s*(\d+).*?Pol:\s*([HV]).*?SR:\s*(\d+)",
+                text, re.S
+            )
+            if not m:
                 continue
+
+            feeds.append({
+                "sat": m.group(1),
+                "orbital": satToOrbital(m.group(1)),
+                "freq": int(m.group(2)),
+                "pol": m.group(3),
+                "sr": int(m.group(4)),
+                "event": text.splitlines()[-1],
+                "encrypted": bool(re.search("crypt|biss|power", text, re.I))
+            })
 
         if feeds:
             saveCache(feeds)
@@ -139,20 +95,18 @@ def getFeeds():
 
     return feeds, fromCache
 
-# ==================================================
-# List Entry
-# ==================================================
+# ================= LIST ENTRY =================
 def FeedEntry(feed):
     color = gRGB(0, 200, 0) if not feed["encrypted"] else gRGB(220, 0, 0)
-    lock =  if not feed["encrypted"] else "🔒 "
+    status = "FTA" if not feed["encrypted"] else "ENC"
 
     return [
         feed,
         MultiContentEntryText(
             pos=(10, 5), size=(860, 30),
             font=0, color=color,
-            text="%s%s | %d %s %d" % (
-                lock, feed["sat"],
+            text="%s | %s %d %s %d" % (
+                status, feed["sat"],
                 feed["freq"], feed["pol"], feed["sr"]
             )
         ),
@@ -163,17 +117,12 @@ def FeedEntry(feed):
         ),
     ]
 
-# ==================================================
-# Main Screen
-# ==================================================
+# ================= SCREEN =================
 class FeedsScreen(Screen):
     skin = """
-    <screen name="FeedsScreen" title="Feed-Hunter"
-        position="center,center" size="900,550">
-        <widget name="list" position="10,10"
-            size="880,450" scrollbarMode="showOnDemand" />
-        <widget name="status" position="10,470"
-            size="880,30" font="Regular;20" />
+    <screen position="center,center" size="900,550" title="Feed-Hunter">
+        <widget name="list" position="10,10" size="880,450" />
+        <widget name="status" position="10,470" size="880,30" font="Regular;20" />
     </screen>
     """
 
@@ -182,8 +131,6 @@ class FeedsScreen(Screen):
 
         self.feeds = []
         self.fromCache = False
-        self.autoEnabled = loadAutoSetting()
-        self.lastUpdate = "--:--"
 
         self["list"] = MenuList([], True, content=eListboxPythonMultiContent)
         self["list"].l.setItemHeight(65)
@@ -194,41 +141,30 @@ class FeedsScreen(Screen):
         self["status"] = StaticText("Loading feeds...")
 
         self["actions"] = ActionMap(
-            ["OkCancelActions", "DirectionActions", "ColorActions"], {
+            ["OkCancelActions", "ColorActions"], {
                 "ok": self.openManualScan,
-                "blue": self.quickTune,
-                "red": self.refreshFeeds,
-                "yellow": self.toggleAutoRefresh,
+                "red": self.refresh,
                 "cancel": self.close,
             }, -1
         )
 
-        self.uiTimer = eTimer()
-        self.uiTimer.callback.append(self.updateUI)
+        self.timer = eTimer()
+        self.timer.callback.append(self.updateUI)
 
-        threading.Thread(target=self.loadFeedsThread, daemon=True).start()
+        threading.Thread(target=self.loadThread, daemon=True).start()
 
-    def loadFeedsThread(self):
+    def loadThread(self):
         self.feeds, self.fromCache = getFeeds()
-        self.lastUpdate = time.strftime("%H:%M")
-        self.uiTimer.start(0, True)
+        self.timer.start(0, True)
 
-    def refreshFeeds(self):
-        self["status"].setText("Refreshing feeds...")
-        threading.Thread(target=self.loadFeedsThread, daemon=True).start()
-
-    def toggleAutoRefresh(self):
-        self.autoEnabled = not self.autoEnabled
-        saveAutoSetting(self.autoEnabled)
-        self.updateUI()
+    def refresh(self):
+        self["status"].setText("Refreshing...")
+        threading.Thread(target=self.loadThread, daemon=True).start()
 
     def updateUI(self):
         self["list"].setList(self.feeds)
-        src = "Cached" if self.fromCache else "Live"
-        self["status"].setText(
-            "%s feeds: %d | Updated: %s"
-            % (src, len(self.feeds), self.lastUpdate)
-        )
+        src = "CACHE" if self.fromCache else "LIVE"
+        self["status"].setText("%s | feeds: %d" % (src, len(self.feeds)))
 
     def openManualScan(self):
         cur = self["list"].getCurrent()
@@ -253,50 +189,14 @@ class FeedsScreen(Screen):
         self.session.open(ServiceScan, nims[0],
                           transponder=tp, scanList=[tp])
 
-    def quickTune(self):
-        cur = self["list"].getCurrent()
-        if not cur:
-            return
-        feed = cur[0]
-
-        try:
-            fe = eDVBFrontendParametersSatellite()
-            fe.frequency = feed["freq"] * 1000
-            fe.symbol_rate = feed["sr"] * 1000
-            fe.polarisation = (
-                fe.Polarisation_Horizontal
-                if feed["pol"] == "H"
-                else fe.Polarisation_Vertical
-            )
-            fe.fec = fe.FEC_Auto
-            fe.system = fe.System_Auto
-            fe.modulation = fe.Modulation_Auto
-            fe.orbital_position = feed["orbital"]
-
-            ref = eServiceReference(
-                eServiceReference.idDVB,
-                eServiceReference.flagDirectory,
-                0
-            )
-            ref.setData(0, fe)
-            self.session.nav.playService(ref)
-            self["status"].setText("Watching (not saved)")
-        except:
-            self["status"].setText("Tune failed")
-
-    def close(self):
-        Screen.close(self)
-
-# ==================================================
-# Plugin Entry
-# ==================================================
+# ================= PLUGIN =================
 def main(session, **kwargs):
     session.open(FeedsScreen)
 
 def Plugins(**kwargs):
     return PluginDescriptor(
         name="Feed-Hunter",
-        description="Feed Scanner (Safe Mode)",
+        description="Satellite Feed Scanner",
         where=PluginDescriptor.WHERE_PLUGINMENU,
         fnc=main
     )
