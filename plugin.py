@@ -13,8 +13,19 @@ from enigma import (
 )
 
 import threading, re, json, os, time
-import requests
-from bs4 import BeautifulSoup
+
+# ==================================================
+# SAFE IMPORTS (NO BLACK SCREEN)
+# ==================================================
+try:
+    import requests
+except:
+    requests = None
+
+try:
+    from bs4 import BeautifulSoup
+except:
+    BeautifulSoup = None
 
 # ==================================================
 # CONFIG
@@ -73,9 +84,13 @@ def loadCache():
     return []
 
 # ==================================================
-# Fetch Feeds
+# Fetch Feeds (SAFE)
 # ==================================================
 def getFeeds():
+    # لو المكتبات مش موجودة
+    if not requests or not BeautifulSoup:
+        return [], False
+
     feeds = []
     fromCache = False
 
@@ -100,7 +115,7 @@ def getFeeds():
                 if not m:
                     continue
 
-                feed = {
+                feeds.append({
                     "sat": satname,
                     "orbital": satToOrbital(satname),
                     "freq": int(m.group(1)),
@@ -111,9 +126,7 @@ def getFeeds():
                         r"Encrypted|Scrambled|BISS|PowerVu|crypt",
                         text, re.I
                     ))
-                }
-
-                feeds.append(feed)
+                })
             except:
                 continue
 
@@ -127,7 +140,7 @@ def getFeeds():
     return feeds, fromCache
 
 # ==================================================
-# List Entry (FIXED)
+# List Entry
 # ==================================================
 def FeedEntry(feed):
     color = gRGB(0, 200, 0) if not feed["encrypted"] else gRGB(220, 0, 0)
@@ -176,7 +189,7 @@ class FeedsScreen(Screen):
         self["list"].l.setItemHeight(65)
         self["list"].l.setFont(0, gFont("Regular", 22))
         self["list"].l.setFont(1, gFont("Regular", 18))
-        self["list"].l.setBuildFunc(FeedEntry)  # ✅ FIX
+        self["list"].l.setBuildFunc(FeedEntry)
 
         self["status"] = StaticText("Loading feeds...")
 
@@ -187,18 +200,11 @@ class FeedsScreen(Screen):
                 "red": self.refreshFeeds,
                 "yellow": self.toggleAutoRefresh,
                 "cancel": self.close,
-                "up": self["list"].up,
-                "down": self["list"].down,
             }, -1
         )
 
         self.uiTimer = eTimer()
         self.uiTimer.callback.append(self.updateUI)
-
-        self.autoTimer = eTimer()
-        self.autoTimer.callback.append(self.autoRefresh)
-        if self.autoEnabled:
-            self.autoTimer.start(AUTO_REFRESH, False)
 
         threading.Thread(target=self.loadFeedsThread, daemon=True).start()
 
@@ -211,26 +217,17 @@ class FeedsScreen(Screen):
         self["status"].setText("Refreshing feeds...")
         threading.Thread(target=self.loadFeedsThread, daemon=True).start()
 
-    def autoRefresh(self):
-        if self.autoEnabled:
-            threading.Thread(target=self.loadFeedsThread, daemon=True).start()
-
     def toggleAutoRefresh(self):
         self.autoEnabled = not self.autoEnabled
         saveAutoSetting(self.autoEnabled)
-        if self.autoEnabled:
-            self.autoTimer.start(AUTO_REFRESH, False)
-        else:
-            self.autoTimer.stop()
         self.updateUI()
 
     def updateUI(self):
-        self["list"].setList(self.feeds)  # ✅ FIX
+        self["list"].setList(self.feeds)
         src = "Cached" if self.fromCache else "Live"
-        auto = "ON" if self.autoEnabled else "OFF"
         self["status"].setText(
-            "%s feeds: %d | Auto: %s | Updated: %s"
-            % (src, len(self.feeds), auto, self.lastUpdate)
+            "%s feeds: %d | Updated: %s"
+            % (src, len(self.feeds), self.lastUpdate)
         )
 
     def openManualScan(self):
@@ -288,11 +285,6 @@ class FeedsScreen(Screen):
             self["status"].setText("Tune failed")
 
     def close(self):
-        try:
-            self.autoTimer.stop()
-        except:
-            pass
-        saveAutoSetting(self.autoEnabled)
         Screen.close(self)
 
 # ==================================================
@@ -304,8 +296,7 @@ def main(session, **kwargs):
 def Plugins(**kwargs):
     return PluginDescriptor(
         name="Feed-Hunter",
-        description="Feed Scanner + Quick Watch (Python3)",
+        description="Feed Scanner (Safe Mode)",
         where=PluginDescriptor.WHERE_PLUGINMENU,
-        icon="icon.png",
         fnc=main
     )
