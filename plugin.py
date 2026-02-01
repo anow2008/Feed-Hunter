@@ -20,84 +20,61 @@ except ImportError:
     BeautifulSoup = None
 
 URL = "https://www.satelliweb.com/index.php?section=livef"
-CACHE = "/tmp/feedhunter_cache.json"
 
 # ================= HELPERS =================
 def satToOrbital(txt):
     m = re.search(r"(\d+(?:\.\d+)?)\s*([EW])", txt, re.I)
-    if not m:
-        return 0
+    if not m: return 0
     p = int(float(m.group(1)) * 10)
     return 3600 - p if m.group(2).upper() == "W" else p
 
-def loadCache():
-    try:
-        with open(CACHE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return []
-
-def saveCache(d):
-    try:
-        with open(CACHE, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False)
-    except:
-        pass
-
-# ================= LIST ENTRY =================
 def FeedEntry(f):
     return [
         f,
-        MultiContentEntryText(
-            pos=(5, 5), size=(770, 30),
-            font=0, color=gRGB(0, 200, 0),
-            text=f"{f['sat']} | {f['freq']} {f['pol']} {f['sr']}"
-        ),
-        MultiContentEntryText(
-            pos=(5, 35), size=(770, 25),
-            font=1, text=f["event"]
-        ),
+        # استخدام نظام الألوان Hex لضمان ثبات الشكل على كل الصور
+        MultiContentEntryText(pos=(10, 5), size=(760, 30), font=0, color=0x00FF00, text=f"{f['sat']} | {f['freq']} {f['pol']} {f['sr']}"),
+        MultiContentEntryText(pos=(10, 35), size=(760, 25), font=1, color=0xFFFFFF, text=f["event"]),
     ]
 
 # ================= SCREEN =================
 class FeedHunter(Screen):
+    # سكين متوافق مع كافة الشاشات (Full HD & HD)
+    skin = """
+    <screen name="FeedHunter" position="center,center" size="800,520" title="Feed Hunter Pro">
+        <widget name="list" position="10,10" size="780,420" scrollbarMode="showOnDemand" transparent="1" />
+        <eLabel position="10,435" size="780,1" backgroundColor="#555555" />
+        <widget source="status" render="Label" position="10,445" size="780,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
+    </screen>
+    """
+
     def __init__(self, session):
         Screen.__init__(self, session)
-
         self.feeds = []
-
-        # إضافة skin لتحديد الأبعاد
-        skin = """<screen name="FeedHunter" position="center,center" size="800,480" title="Feed Hunter">
-                    <widget name="list" position="10,10" size="780,400" />
-                    <widget source="status" render="Label" position="10,420" size="780,40" />
-                  </screen>"""
-        self.skin = skin
-
-        # إنشاء الـ Listbox و Status بدون Skin
         self["list"] = Listbox([])
         self["list"].l.setBuildFunc(FeedEntry)
         self["list"].l.setItemHeight(70)
-        self["list"].l.setFont(0, gFont("Regular", 18))
-        self["list"].l.setFont(1, gFont("Regular", 16))
+        self["list"].l.setFont(0, gFont("Regular", 22))
+        self["list"].l.setFont(1, gFont("Regular", 18))
 
-        self["status"] = StaticText("Loading feeds...")
+        self["status"] = StaticText("جاري جلب البيانات من المصدر...")
 
-        # أفعال OK / Cancel / Red
-        self["actions"] = ActionMap(
-            ["OkCancelActions", "ColorActions"], {
-                "ok": self.scan,
-                "cancel": self.close,
-                "red": self.close
-            }, -1
-        )
+        self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
+            "ok": self.scan,
+            "cancel": self.close,
+            "red": self.close,
+            "green": self.reload # تفعيل الزر الأخضر للتحديث
+        }, -1)
 
-        # Timer لتحديث UI بعد تحميل البيانات
         self.timer = eTimer()
         self.timer.callback.append(self.updateUI)
+        
+        # بدء التحميل عند الفتح
+        self.reload()
 
-        # التأكد من وجود المكتبات قبل البدء
-        if requests is None or BeautifulSoup is None:
-            self["status"].setText("Error: requests/bs4 missing!")
+    def reload(self):
+        self["status"].setText("جاري التحديث... يرجى الانتظار")
+        if requests is None:
+            self["status"].setText("خطأ: مكتبة requests غير موجودة في الصورة!")
         else:
             threading.Thread(target=self.loadThread, daemon=True).start()
 
@@ -108,77 +85,70 @@ class FeedHunter(Screen):
     def getFeedsData(self):
         feeds = []
         try:
-            res = requests.get(URL, timeout=10)
+            # إضافة User-Agent لتجنب الحظر من الموقع
+            res = requests.get(URL, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
             soup = BeautifulSoup(res.text, "html.parser")
             for div in soup.find_all("div", class_="feed"):
-                text = div.get_text(" ")
-                m = re.search(
-                    r"(\d+(?:\.\d+)?[EW]).*?Frequency:\s*(\d+).*?Pol:\s*([HV]).*?SR:\s*(\d+)",
-                    text
-                )
+                text = div.get_text(" ", strip=True)
+                m = re.search(r"(\d+(?:\.\d+)?[EW]).*?Frequency:\s*(\d+).*?Pol:\s*([HV]).*?SR:\s*(\d+)", text)
                 if m:
-                    event_text = re.sub(r'<[^>]*>', '', text).strip()[-50:]
+                    # تنظيف النص من أي وسوم HTML متبقية
+                    clean_text = re.sub(r'<[^>]*>', '', text)
+                    # استخراج اسم الحدث بذكاء (أول جزء قبل الفاصل)
+                    event_name = clean_text.split('|')[0].strip()[:65]
+                    
                     feeds.append({
                         "sat": m.group(1),
                         "orbital": satToOrbital(m.group(1)),
                         "freq": int(m.group(2)),
                         "pol": m.group(3),
                         "sr": int(m.group(4)),
-                        "event": event_text  # تحسين استخراج النص
+                        "event": event_name
                     })
-            if feeds:
-                saveCache(feeds)
-            else:
-                feeds = loadCache()
         except Exception as e:
-            print("Error fetching feeds:", e)
-            feeds = loadCache()
+            print("[FeedHunter] Error fetching data:", str(e))
         return feeds
 
     def updateUI(self):
         self["list"].setList(self.feeds)
-        self["status"].setText(f"Found {len(self.feeds)} feeds - Press OK to Scan")
+        status_msg = f"تم العثور على {len(self.feeds)} فيد\nOK للبحث | الأخضر للتحديث"
+        self["status"].setText(status_msg)
 
     def scan(self):
         cur = self["list"].getCurrent()
-        if not cur:
-            return
+        if not cur: return
         f = cur[0]
 
         nims = getattr(nimmanager, "getNimListOfType", lambda x: [])("DVB-S")
         if not nims:
-            self["status"].setText("No DVB-S NIM found!")
+            self["status"].setText("خطأ: لم يتم العثور على تيونر متاح")
             return
 
-        # تعديل إعدادات الـ scan بناءً على البيانات
-        modulation_map = {"8PSK": 2, "16APSK": 3, "QPSK": 1}
-        modulation = modulation_map.get(f.get("modulation", "QPSK"), 1)  # الافتراضي QPSK
-        system = 1 if f.get("system", "DVB-S2") == "DVB-S2" else 0  # DVB-S إذا كان غير ذلك
-
+        # إعدادات التردد (DVB-S2 / 8PSK كافتراض ذكي للفيدات)
         tp = {
-            "frequency": f["freq"] * 1000,        # تحويل إلى KHz
-            "symbol_rate": f["sr"] * 1000,        # تحويل إلى KHz
+            "frequency": f["freq"] * 1000,
+            "symbol_rate": f["sr"] * 1000,
             "polarization": 0 if f["pol"] == "H" else 1,
-            "fec_inner": 0,
-            "system": system,
-            "modulation": modulation,
+            "fec_inner": 0, # Auto
+            "system": 1,    # DVB-S2
+            "modulation": 2, # 8PSK
             "orbital_position": f["orbital"]
         }
 
-        # try-except حول الـ scan لضمان عدم انهيار الجهاز
         try:
             self.session.open(ServiceScan, nims[0], transponder=tp, scanList=[tp])
         except Exception as e:
-            self["status"].setText(f"Error: {str(e)}")
+            self["status"].setText("فشل فتح واجهة البحث الرسمية")
 
-# ================= PLUGIN =================
+# ================= PLUGIN START =================
 def main(session, **kwargs):
     session.open(FeedHunter)
 
 def Plugins(**kwargs):
     return PluginDescriptor(
-        name="Feed-Hunter",
-        description="Feed scanner for any Enigma2 Py3 image (No Skin)",
+        name="Feed Hunter Pro",
+        description="جالب ومستخرج فيدات الأقمار الصناعية مباشر",
         where=PluginDescriptor.WHERE_PLUGINMENU,
-        fnc=main
+        fnc=main,
+        icon="plugin.png" # 
     )
