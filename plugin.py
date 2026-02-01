@@ -66,6 +66,13 @@ class FeedHunter(Screen):
 
         self.feeds = []
 
+        # إضافة skin لتحديد الأبعاد
+        skin = """<screen name="FeedHunter" position="center,center" size="800,480" title="Feed Hunter">
+                    <widget name="list" position="10,10" size="780,400" />
+                    <widget source="status" render="Label" position="10,420" size="780,40" />
+                  </screen>"""
+        self.skin = skin
+
         # إنشاء الـ Listbox و Status بدون Skin
         self["list"] = Listbox([])
         self["list"].l.setBuildFunc(FeedEntry)
@@ -110,13 +117,14 @@ class FeedHunter(Screen):
                     text
                 )
                 if m:
+                    event_text = re.sub(r'<[^>]*>', '', text).strip()[-50:]
                     feeds.append({
                         "sat": m.group(1),
                         "orbital": satToOrbital(m.group(1)),
                         "freq": int(m.group(2)),
                         "pol": m.group(3),
                         "sr": int(m.group(4)),
-                        "event": text.strip()[-50:]  # آخر 50 حرف
+                        "event": event_text  # تحسين استخراج النص
                     })
             if feeds:
                 saveCache(feeds)
@@ -142,17 +150,26 @@ class FeedHunter(Screen):
             self["status"].setText("No DVB-S NIM found!")
             return
 
+        # تعديل إعدادات الـ scan بناءً على البيانات
+        modulation_map = {"8PSK": 2, "16APSK": 3, "QPSK": 1}
+        modulation = modulation_map.get(f.get("modulation", "QPSK"), 1)  # الافتراضي QPSK
+        system = 1 if f.get("system", "DVB-S2") == "DVB-S2" else 0  # DVB-S إذا كان غير ذلك
+
         tp = {
             "frequency": f["freq"] * 1000,        # تحويل إلى KHz
             "symbol_rate": f["sr"] * 1000,        # تحويل إلى KHz
             "polarization": 0 if f["pol"] == "H" else 1,
             "fec_inner": 0,
-            "system": 1,       # DVB-S2
-            "modulation": 2,   # 8PSK
+            "system": system,
+            "modulation": modulation,
             "orbital_position": f["orbital"]
         }
 
-        self.session.open(ServiceScan, nims[0], transponder=tp, scanList=[tp])
+        # try-except حول الـ scan لضمان عدم انهيار الجهاز
+        try:
+            self.session.open(ServiceScan, nims[0], transponder=tp, scanList=[tp])
+        except Exception as e:
+            self["status"].setText(f"Error: {str(e)}")
 
 # ================= PLUGIN =================
 def main(session, **kwargs):
