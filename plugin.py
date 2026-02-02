@@ -21,8 +21,9 @@ def satToOrbital(txt):
         return 0
 
 def FeedEntry(f):
+    # في بايثون 3 تم حذف حرف u قبل النصوص
     return [f,
-        MultiContentEntryText(pos=(15, 5), size=(750, 30), font=0, color=0x00FF00, text=u"{} | {} {} {}".format(f['sat'], f['freq'], f['pol'], f['sr'])),
+        MultiContentEntryText(pos=(15, 5), size=(750, 30), font=0, color=0x00FF00, text="{} | {} {} {}".format(f['sat'], f['freq'], f['pol'], f['sr'])),
         MultiContentEntryText(pos=(15, 35), size=(750, 25), font=1, color=0xFFFFFF, text=f["event"])]
 
 class FeedHunter(Screen):
@@ -71,8 +72,9 @@ class FeedHunter(Screen):
     def fetchFeeds(self):
         new_feeds = []
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(URL, timeout=10, headers=headers)
+            # استخدام response.text مباشرة في بايثون 3
             matches = re.findall(r'<div class="feed".*?>(.*?)</div>', response.text, re.S | re.I)
             
             for html in matches:
@@ -107,7 +109,6 @@ class FeedHunter(Screen):
         
         f = selection[0]
         tuner_slot = -1
-        # Check for available tuner slot
         for slot in nimmanager.nim_slots:
             if slot.isCompatible("DVB-S") and not slot.empty:
                 tuner_slot = slot.slot
@@ -117,18 +118,17 @@ class FeedHunter(Screen):
             self["status"].setText("No Active Satellite Tuner Found!")
             return
 
-        # Prepare transponder settings
         tp = {
             "type": "S2",
             "frequency": f["freq"] * 1000, 
             "symbol_rate": f["sr"] * 1000, 
             "polarization": 0 if f["pol"] == "H" else 1,
-            "fec_inner": 0,    # Auto
-            "system": 1,       # DVB-S2
-            "modulation": 2,   # 8PSK
-            "inversion": 2,    # Auto
-            "roll_off": 3,     # Auto
-            "pilot": 2,        # Auto
+            "fec_inner": 0,
+            "system": 1,
+            "modulation": 2,
+            "inversion": 2,
+            "roll_off": 3,
+            "pilot": 2,
             "orbital_position": int(f["orbital"])
         }
         
