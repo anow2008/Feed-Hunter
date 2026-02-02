@@ -6,10 +6,14 @@ from Components.Sources.StaticText import StaticText
 from Components.NimManager import nimmanager
 from Components.Listbox import Listbox
 from Components.MultiContent import MultiContentEntryText
-from enigma import eListboxPythonMultiContent, gFont, eTimer
+from enigma import eListboxPythonMultiContent, gFont, eTimer, getDesktop
 import re, requests, threading
 
 URL = "https://www.satelliweb.com/index.php?section=livef"
+
+# التحقق من دقة الشاشة
+dSize = getDesktop(0).size()
+isFHD = dSize.width() > 1280
 
 def satToOrbital(txt):
     try:
@@ -21,18 +25,32 @@ def satToOrbital(txt):
         return 0
 
 def FeedEntry(f):
-    # في بايثون 3 تم حذف حرف u قبل النصوص
-    return [f,
-        MultiContentEntryText(pos=(15, 5), size=(750, 30), font=0, color=0x00FF00, text="{} | {} {} {}".format(f['sat'], f['freq'], f['pol'], f['sr'])),
-        MultiContentEntryText(pos=(15, 35), size=(750, 25), font=1, color=0xFFFFFF, text=f["event"])]
+    # إعدادات الأبعاد بناءً على الدقة
+    if isFHD:
+        return [f,
+            MultiContentEntryText(pos=(20, 10), size=(1100, 45), font=0, color=0x00FF00, text="{} | {} {} {}".format(f['sat'], f['freq'], f['pol'], f['sr'])),
+            MultiContentEntryText(pos=(20, 55), size=(1100, 40), font=1, color=0xFFFFFF, text=f["event"])]
+    else:
+        return [f,
+            MultiContentEntryText(pos=(15, 5), size=(750, 30), font=0, color=0x00FF00, text="{} | {} {} {}".format(f['sat'], f['freq'], f['pol'], f['sr'])),
+            MultiContentEntryText(pos=(15, 35), size=(750, 25), font=1, color=0xFFFFFF, text=f["event"])]
 
 class FeedHunter(Screen):
-    skin = """
-    <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter Pro v1.6 (Stable)">
-        <widget name="list" position="15,15" size="820,430" scrollbarMode="showOnDemand" transparent="1" />
-        <eLabel position="15,460" size="820,1" backgroundColor="#555555" />
-        <widget source="status" render="Label" position="15,475" size="820,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
-    </screen>"""
+    # سكين مرن يتغير حسب الدقة
+    if isFHD:
+        skin = """
+        <screen name="FeedHunter" position="center,center" size="1200,800" title="Feed Hunter Pro v1.6 (FHD Mode)">
+            <widget name="list" position="30,30" size="1140,600" scrollbarMode="showOnDemand" transparent="1" />
+            <eLabel position="30,650" size="1140,2" backgroundColor="#555555" />
+            <widget source="status" render="Label" position="30,670" size="1140,100" font="Regular;32" halign="center" valign="center" foregroundColor="#00FF00" />
+        </screen>"""
+    else:
+        skin = """
+        <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter Pro v1.6 (HD Mode)">
+            <widget name="list" position="15,15" size="820,430" scrollbarMode="showOnDemand" transparent="1" />
+            <eLabel position="15,460" size="820,1" backgroundColor="#555555" />
+            <widget source="status" render="Label" position="15,475" size="820,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
+        </screen>"""
 
     def __init__(self, session):
         Screen.__init__(self, session)
@@ -41,9 +59,16 @@ class FeedHunter(Screen):
         
         self["list"] = Listbox([])
         self["list"].l.setBuildFunc(FeedEntry)
-        self["list"].l.setItemHeight(75)
-        self["list"].l.setFont(0, gFont("Regular", 24))
-        self["list"].l.setFont(1, gFont("Regular", 20))
+        
+        # ضبط أحجام الخطوط في القائمة حسب الدقة
+        if isFHD:
+            self["list"].l.setItemHeight(110)
+            self["list"].l.setFont(0, gFont("Regular", 36))
+            self["list"].l.setFont(1, gFont("Regular", 30))
+        else:
+            self["list"].l.setItemHeight(75)
+            self["list"].l.setFont(0, gFont("Regular", 24))
+            self["list"].l.setFont(1, gFont("Regular", 20))
         
         self["status"] = StaticText("Initializing...")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
@@ -74,7 +99,6 @@ class FeedHunter(Screen):
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(URL, timeout=10, headers=headers)
-            # استخدام response.text مباشرة في بايثون 3
             matches = re.findall(r'<div class="feed".*?>(.*?)</div>', response.text, re.S | re.I)
             
             for html in matches:
@@ -145,7 +169,7 @@ def main(session, **kwargs):
 def Plugins(**kwargs):
     return PluginDescriptor(
         name="Feed Hunter",
-        description="Satelliweb Live Feeds v1.0",
+        description="Satelliweb Live Feeds (HD/FHD Support)",
         where=PluginDescriptor.WHERE_PLUGINMENU, 
         fnc=main, 
         icon="plugin.png"
