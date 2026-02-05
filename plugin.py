@@ -5,9 +5,7 @@ from Components.ActionMap import ActionMap
 from Components.Sources.StaticText import StaticText
 from Components.NimManager import nimmanager
 from Components.Label import Label
-# استدعاء المكونات الرسمية لـ OpenATV
 from Components.MenuList import MenuList
-from Components.GUIComponent import GUIComponent
 from enigma import eListboxPythonMultiContent, gFont, eTimer, getDesktop, RT_HALIGN_LEFT, RT_VALIGN_CENTER
 import re
 import threading
@@ -43,7 +41,6 @@ def FeedEntry(f):
     display_name = "[{}] {}".format(cat, event)
     details = "{} | {} {} {} | {}".format(str(f.get('sat','')), str(f.get('freq','')), str(f.get('pol','')), str(f.get('sr','')), str(f.get('desc','')))
     
-    # تصحيح رسم الـ MultiContent لـ Python 3
     res.append((eListboxPythonMultiContent.TYPE_TEXT, 10, 5, width, 45 if isFHD else 30, 0, RT_HALIGN_LEFT | RT_VALIGN_CENTER, display_name, 0xFFFFFF))
     res.append((eListboxPythonMultiContent.TYPE_TEXT, 10, 50 if isFHD else 35, width, 40 if isFHD else 25, 1, RT_HALIGN_LEFT | RT_VALIGN_CENTER, details, 0x00FF00))
     return res
@@ -65,8 +62,6 @@ class FeedHunter(Screen):
         Screen.__init__(self, session)
         self.feeds = []
         self.is_fetching = False
-        
-        # استخدام MenuList مباشرة لأنها تدعم MultiContent في Py3
         self["list"] = MenuList([])
         self["list"].l.setBuildFunc(FeedEntry)
         
@@ -87,10 +82,9 @@ class FeedHunter(Screen):
             "green": self.reloadData
         }, -1)
         
-        # تصحيح الـ Timer ليعمل على كل إصدارات Py3
         self.timer = eTimer()
         try:
-            self.timer_conn = self.timer.timeout.connect(self.updateUI)
+            self.timer.timeout.connect(self.updateUI)
         except:
             self.timer.callback.append(self.updateUI)
             
@@ -124,7 +118,8 @@ class FeedHunter(Screen):
                     "sr": int(sr), "category": re.sub(r'<[^>]+>', '', cat).strip() or "Feed",
                     "event": re.sub(r'<[^>]+>', '', event).strip() or "Live Event", "desc": "Feed"
                 })
-        except Exception as e: print("[FeedHunter] Error: ", str(e))
+        except Exception as e: 
+            print("[FeedHunter] Error: ", str(e))
         self.feeds = new_feeds
         self.is_fetching = False
         self.timer.start(100, True)
@@ -137,7 +132,6 @@ class FeedHunter(Screen):
     def startScan(self):
         selection = self["list"].getCurrent()
         if not selection: return
-        # في MenuList المحتوى يكون في العنصر الأول
         f = selection
         tuner_slot = -1
         for slot in nimmanager.nim_slots:
@@ -153,10 +147,17 @@ class FeedHunter(Screen):
         try:
             from Screens.ServiceScan import ServiceScan
             self.session.open(ServiceScan, tuner_slot, transponder=tp, scanList=[tp])
-        except: pass
+        except: 
+            pass
 
 def main(session, **kwargs):
     session.open(FeedHunter)
 
-def Plugins(***kwargs):
-    return PluginDescriptor(name="Feed Hunter", description="Satelliweb Live Feeds (Fixed v3)", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main, icon="plugin.png")
+def Plugins(**kwargs):
+    return PluginDescriptor(
+        name="Feed Hunter", 
+        description="Satelliweb Live Feeds (Fixed Final)", 
+        where=PluginDescriptor.WHERE_PLUGINMENU, 
+        fnc=main, 
+        icon="plugin.png"
+    )
