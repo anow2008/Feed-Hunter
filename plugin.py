@@ -4,9 +4,11 @@ from Screens.Screen import Screen
 from Components.ActionMap import ActionMap
 from Components.Sources.StaticText import StaticText
 from Components.NimManager import nimmanager
-# الحل الصحيح لاستدعاء Listbox في OpenATV 7.x
+from Components.Label import Label
+# استدعاء المكونات الرسمية لـ OpenATV
+from Components.MenuList import MenuList
 from Components.GUIComponent import GUIComponent
-from enigma import eListbox, eListboxPythonMultiContent, gFont, eTimer, getDesktop
+from enigma import eListboxPythonMultiContent, gFont, eTimer, getDesktop, RT_HALIGN_LEFT, RT_VALIGN_CENTER
 import re
 import threading
 
@@ -14,28 +16,6 @@ try:
     import requests
 except ImportError:
     requests = None
-
-# تعريف كلاس الـ Listbox بشكل يدوي لضمان التوافقية
-class Listbox(GUIComponent):
-    def __init__(self):
-        GUIComponent.__init__(self)
-        self.instance = eListbox()
-        self.l = eListboxPythonMultiContent()
-        self.instance.setContent(self.l)
-
-    def setList(self, l):
-        self.l.setList(l)
-
-    def getCurrent(self):
-        return self.instance.getCurrentSelection()
-
-    def GUIcreate(self, parent):
-        self.instance = eListbox(parent)
-        self.instance.setContent(self.l)
-
-    def GUIdelete(self):
-        self.instance.setContent(None)
-        self.instance = None
 
 URL = "https://www.satelliweb.com/index.php?section=livef"
 dSize = getDesktop(0).size()
@@ -53,10 +33,6 @@ def satToOrbital(txt):
     except:
         return 0
 
-def MultiContentEntryText(pos, size, font, color, text):
-    from enigma import RT_HALIGN_LEFT, RT_VALIGN_CENTER
-    return (eListboxPythonMultiContent.TYPE_TEXT, pos[0], pos[1], size[0], size[1], font, RT_HALIGN_LEFT | RT_VALIGN_CENTER, text, color)
-
 def FeedEntry(f):
     if f is None: return []
     width = 1100 if isFHD else 800
@@ -67,31 +43,31 @@ def FeedEntry(f):
     display_name = "[{}] {}".format(cat, event)
     details = "{} | {} {} {} | {}".format(str(f.get('sat','')), str(f.get('freq','')), str(f.get('pol','')), str(f.get('sr','')), str(f.get('desc','')))
     
-    res.append(MultiContentEntryText(pos=(10, 5), size=(width, 45 if isFHD else 30), font=0, color=0xFFFFFF, text=display_name))
-    res.append(MultiContentEntryText(pos=(10, 50 if isFHD else 35), size=(width, 40 if isFHD else 25), font=1, color=0x00FF00, text=details))
+    # تصحيح رسم الـ MultiContent لـ Python 3
+    res.append((eListboxPythonMultiContent.TYPE_TEXT, 10, 5, width, 45 if isFHD else 30, 0, RT_HALIGN_LEFT | RT_VALIGN_CENTER, display_name, 0xFFFFFF))
+    res.append((eListboxPythonMultiContent.TYPE_TEXT, 10, 50 if isFHD else 35, width, 40 if isFHD else 25, 1, RT_HALIGN_LEFT | RT_VALIGN_CENTER, details, 0x00FF00))
     return res
 
 class FeedHunter(Screen):
-    if isFHD:
-        skin = """
-        <screen name="FeedHunter" position="center,center" size="1200,820" title="Feed Hunter v1.0 (Py3 Fix)">
-            <widget name="list" position="20,20" size="1160,650" scrollbarMode="showOnDemand" transparent="1" />
-            <eLabel position="20,680" size="1160,2" backgroundColor="#555555" />
-            <widget source="status" render="Label" position="20,700" size="1160,80" font="Regular;30" halign="center" valign="center" foregroundColor="#00FF00" />
-        </screen>"""
-    else:
-        skin = """
-        <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter v1.0 (Py3 Fix)">
-            <widget name="list" position="15,15" size="820,420" scrollbarMode="showOnDemand" transparent="1" />
-            <eLabel position="15,450" size="820,1" backgroundColor="#555555" />
-            <widget source="status" render="Label" position="15,465" size="820,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
-        </screen>"""
+    skin = """
+    <screen name="FeedHunter" position="center,center" size="{w},{h}" title="Feed Hunter v1.0 (Py3)">
+        <widget name="list" position="20,20" size="{lw},{lh}" scrollbarMode="showOnDemand" transparent="1" />
+        <eLabel position="20,{line_y}" size="{lw},2" backgroundColor="#555555" />
+        <widget name="status_label" position="20,{stat_y}" size="{lw},80" font="Regular;{fs}" halign="center" valign="center" foregroundColor="#00FF00" />
+    </screen>""".format(
+        w=1200 if isFHD else 850, h=820 if isFHD else 550,
+        lw=1160 if isFHD else 820, lh=650 if isFHD else 420,
+        line_y=680 if isFHD else 450, stat_y=700 if isFHD else 465,
+        fs=30 if isFHD else 22
+    )
 
     def __init__(self, session):
         Screen.__init__(self, session)
         self.feeds = []
         self.is_fetching = False
-        self["list"] = Listbox() # استخدام الكلاس المعدل
+        
+        # استخدام MenuList مباشرة لأنها تدعم MultiContent في Py3
+        self["list"] = MenuList([])
         self["list"].l.setBuildFunc(FeedEntry)
         
         if isFHD:
@@ -103,7 +79,7 @@ class FeedHunter(Screen):
             self["list"].l.setFont(0, gFont("Regular", 24))
             self["list"].l.setFont(1, gFont("Regular", 18))
         
-        self["status"] = StaticText("Connecting to Satelliweb...")
+        self["status_label"] = Label("Connecting to Satelliweb...")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
             "ok": self.startScan, 
             "cancel": self.close, 
@@ -111,22 +87,26 @@ class FeedHunter(Screen):
             "green": self.reloadData
         }, -1)
         
+        # تصحيح الـ Timer ليعمل على كل إصدارات Py3
         self.timer = eTimer()
-        self.timer.callback.append(self.updateUI)
+        try:
+            self.timer_conn = self.timer.timeout.connect(self.updateUI)
+        except:
+            self.timer.callback.append(self.updateUI)
             
         self.onClose.append(self.cleanup)
-        self.reloadData()
+        self.onLayoutFinish.append(self.reloadData)
 
     def cleanup(self):
         if self.timer.isActive(): self.timer.stop()
 
     def reloadData(self):
         if not requests:
-            self["status"].setText("Error: Python-requests not installed!")
+            self["status_label"].setText("Error: Python-requests not installed!")
             return
         if self.is_fetching: return
         self.is_fetching = True
-        self["status"].setText("Fetching feeds, please wait...")
+        self["status_label"].setText("Fetching feeds, please wait...")
         threading.Thread(target=self.fetchFeeds, daemon=True).start()
 
     def fetchFeeds(self):
@@ -152,12 +132,13 @@ class FeedHunter(Screen):
     def updateUI(self):
         self["list"].setList(self.feeds)
         status = "Found {} feeds | [OK] Scan | [GREEN] Refresh".format(len(self.feeds)) if self.feeds else "No feeds found!"
-        self["status"].setText(status)
+        self["status_label"].setText(status)
 
     def startScan(self):
         selection = self["list"].getCurrent()
-        if not selection or not self.feeds: return
-        f = selection[0]
+        if not selection: return
+        # في MenuList المحتوى يكون في العنصر الأول
+        f = selection
         tuner_slot = -1
         for slot in nimmanager.nim_slots:
             if slot.isCompatible("DVB-S"):
@@ -177,5 +158,5 @@ class FeedHunter(Screen):
 def main(session, **kwargs):
     session.open(FeedHunter)
 
-def Plugins(**kwargs):
-    return PluginDescriptor(name="Feed Hunter", description="Satelliweb Live Feeds (Fixed)", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main, icon="plugin.png")
+def Plugins(***kwargs):
+    return PluginDescriptor(name="Feed Hunter", description="Satelliweb Live Feeds (Fixed v3)", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main, icon="plugin.png")
