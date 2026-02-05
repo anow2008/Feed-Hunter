@@ -55,7 +55,7 @@ class FeedHunter(Screen):
         </screen>"""
     else:
         skin = """
-        <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter Pro v1.8 (English)">
+        <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter v1.8 (English)">
             <widget name="list" position="15,15" size="820,420" scrollbarMode="showOnDemand" transparent="1" />
             <eLabel position="15,450" size="820,1" backgroundColor="#555555" />
             <widget source="status" render="Label" position="15,465" size="820,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
