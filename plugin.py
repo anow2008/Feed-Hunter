@@ -11,37 +11,33 @@ import threading
 
 try:
     import requests
+    # تعطيل تحذيرات شهادات الأمان لضمان الاتصال
+    from requests.packages.urllib3.exceptions import InsecureRequestWarning
+    requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 except ImportError:
     requests = None
 
 URL = "https://www.satelliweb.com/index.php?section=livef"
-dSize = getDesktop(0).size()
-isFHD = dSize.width() > 1280
 
 class FeedHunter(Screen):
-    # استخدام سكين مبسط جداً لضمان عدم حدوث تعارض مع Premium-FHD
     skin = """
-    <screen name="FeedHunter" position="center,center" size="{w},{h}" title="Feed Hunter v1.0">
-        <widget name="list" position="10,10" size="{lw},{lh}" scrollbarMode="showOnDemand" transparent="1" />
-        <widget name="status_label" position="10,{stat_y}" size="{lw},60" font="Regular;{fs}" halign="center" valign="center" foregroundColor="#00FF00" backgroundColor="#000000" />
-    </screen>""".format(
-        w=1100 if isFHD else 800, h=700 if isFHD else 500,
-        lw=1080 if isFHD else 780, lh=580 if isFHD else 400,
-        stat_y=610 if isFHD else 420, fs=28 if isFHD else 20
-    )
+    <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter v1.1 (Multi-Source)">
+        <widget name="list" position="20,20" size="810,420" scrollbarMode="showOnDemand" transparent="1" />
+        <widget name="status_label" position="20,460" size="810,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
+    </screen>"""
 
     def __init__(self, session):
         Screen.__init__(self, session)
-        # استخدام MenuList عادية (نص فقط) لضمان الظهور
         self["list"] = MenuList([])
-        self["status_label"] = Label("Connecting... Please wait")
+        self["status_label"] = Label("Initialising connection...")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
             "ok": self.startScan,
             "cancel": self.close,
             "green": self.reloadData
         }, -1)
 
-        self.feed_data = [] # لتخزين البيانات التقنية بعيداً عن العرض
+        self.feed_data = []
+        self.final_list = []
         self.timer = eTimer()
         try:
             self.timer.timeout.connect(self.showResults)
@@ -51,72 +47,75 @@ class FeedHunter(Screen):
         self.onLayoutFinish.append(self.reloadData)
 
     def reloadData(self):
-        self["status_label"].setText("Fetching data from Satelliweb...")
+        self["status_label"].setText("Fetching data... Please wait up to 20s")
         self["list"].setList([])
         threading.Thread(target=self.fetchFeeds, daemon=True).start()
 
     def fetchFeeds(self):
         display_list = []
         technical_data = []
+        
+        # محاولة الاتصال عبر أكثر من وسيلة
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124'}
+        
+        success = False
         try:
-            if requests:
-                # محاكاة متصفح حقيقي لتجنب الحجب
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-                r = requests.get(URL, timeout=15, headers=headers)
-                r.encoding = 'utf-8'
-                
-                # نمط بحث أكثر دقة لبيانات الموقع
+            # المحاولة الأولى: مباشر مع تعطيل التحقق من الشهادة
+            r = requests.get(URL, timeout=15, headers=headers, verify=False)
+            if r.status_code == 200:
+                success = True
+                html = r.text
+            else:
+                # المحاولة الثانية: استخدام بروكسي خارجي لتجاوز الحظر
+                proxy_url = "https://api.allorigins.win/get?url=" + requests.utils.quote(URL)
+                r = requests.get(proxy_url, timeout=15, verify=False)
+                import json
+                html = json.loads(r.text)['contents']
+                success = True
+        except Exception as e:
+            print("Fetch Error:", str(e))
+            success = False
+
+        if success:
+            try:
                 pattern = r"(\d+\.\d°[EW]).*?Frequency:.*?<b>(\d+)</b>.*?Pol:.*?<b>([HV])</b>.*?SR:.*?<b>(\d+)</b>.*?Category:.*?<b>(.*?)</b>.*?ℹ\s*(.*?)(?=<)"
-                matches = re.findall(pattern, r.text, re.S | re.I)
+                matches = re.findall(pattern, html, re.S | re.I)
                 
                 for (sat, freq, pol, sr, cat, event) in matches:
                     c_event = re.sub(r'<[^>]+>', '', event).strip()
-                    # نص العرض البسيط
                     display_list.append("{} - {} ({} {} {})".format(sat, c_event, freq, pol, sr))
                     
-                    # البيانات التقنية للبحث
                     m = re.search(r"(\d+\.?\d*)\s*°?\s*([EW])", sat, re.I)
                     orb = 0
                     if m:
                         p = float(m.group(1))
                         orb = int((360 - p) * 10) if m.group(2).upper() == 'W' else int(p * 10)
-                    
                     technical_data.append({"freq": int(freq), "pol": pol.upper(), "sr": int(sr), "orbital": orb})
-            
-            self.feed_data = technical_data
-            self.final_list = display_list
-        except Exception as e:
-            print("Error: ", str(e))
-            self.final_list = []
+            except:
+                pass
 
+        self.feed_data = technical_data
+        self.final_list = display_list
         self.timer.start(100, True)
 
     def showResults(self):
         if self.final_list:
             self["list"].setList(self.final_list)
-            self["status_label"].setText("Found {} Feeds. Select and press OK".format(len(self.final_list)))
+            self["status_label"].setText("Found {} feeds. Select & OK".format(len(self.final_list)))
         else:
-            self["status_label"].setText("Failed to get data. Try again later.")
+            self["status_label"].setText("Error: Website Blocked or No Internet!")
 
     def startScan(self):
         idx = self["list"].getSelectedIndex()
         if idx < 0 or idx >= len(self.feed_data): return
-        
         f = self.feed_data[idx]
         tuner_slot = -1
         for slot in nimmanager.nim_slots:
             if slot.isCompatible("DVB-S"):
                 tuner_slot = slot.slot
                 break
-        
         if tuner_slot != -1:
-            tp = {
-                "type": "S2", "frequency": f["freq"] * 1000, "symbol_rate": f["sr"] * 1000,
-                "polarization": 0 if f["pol"] == "H" else 1, "fec_inner": 0, "system": 1,
-                "modulation": 2, "inversion": 2, "roll_off": 3, "pilot": 2, "orbital_position": f["orbital"]
-            }
+            tp = {"type": "S2", "frequency": f["freq"] * 1000, "symbol_rate": f["sr"] * 1000, "polarization": 0 if f["pol"] == "H" else 1, "fec_inner": 0, "system": 1, "modulation": 2, "inversion": 2, "roll_off": 3, "pilot": 2, "orbital_position": f["orbital"]}
             try:
                 from Screens.ServiceScan import ServiceScan
                 self.session.open(ServiceScan, tuner_slot, transponder=tp, scanList=[tp])
