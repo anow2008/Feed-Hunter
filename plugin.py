@@ -4,7 +4,7 @@ from Screens.Screen import Screen
 from Components.ActionMap import ActionMap
 from Components.Sources.StaticText import StaticText
 from Components.NimManager import nimmanager
-from Components.Listbox import Listbox
+from Components.MenuList import MenuList  # تم استبدال Listbox بـ MenuList
 from Components.MultiContent import MultiContentEntryText
 from enigma import eListboxPythonMultiContent, gFont, eTimer, getDesktop
 import re
@@ -32,6 +32,7 @@ def satToOrbital(txt):
         return 0
 
 def FeedEntry(f):
+    if f is None: return []
     width = 1100 if isFHD else 800
     res = [f]
     
@@ -39,7 +40,7 @@ def FeedEntry(f):
     event = f.get("event", "No Name")
     display_name = "[{}] {}".format(cat, event)
     
-    details = "{} | {} {} {} | {}".format(str(f['sat']), str(f['freq']), str(f['pol']), str(f['sr']), str(f['desc']))
+    details = "{} | {} {} {} | {}".format(str(f.get('sat','')), str(f.get('freq','')), str(f.get('pol','')), str(f.get('sr','')), str(f.get('desc','')))
     
     res.append(MultiContentEntryText(pos=(10, 5), size=(width, 45 if isFHD else 30), font=0, color=0xFFFFFF, text=display_name))
     res.append(MultiContentEntryText(pos=(10, 50 if isFHD else 35), size=(width, 40 if isFHD else 25), font=1, color=0x00FF00, text=details))
@@ -48,14 +49,14 @@ def FeedEntry(f):
 class FeedHunter(Screen):
     if isFHD:
         skin = """
-        <screen name="FeedHunter" position="center,center" size="1200,820" title="Feed Hunter v1.0 (English)">
+        <screen name="FeedHunter" position="center,center" size="1200,820" title="Feed Hunter v1.0 (Py3)">
             <widget name="list" position="20,20" size="1160,650" scrollbarMode="showOnDemand" transparent="1" />
             <eLabel position="20,680" size="1160,2" backgroundColor="#555555" />
             <widget source="status" render="Label" position="20,700" size="1160,80" font="Regular;30" halign="center" valign="center" foregroundColor="#00FF00" />
         </screen>"""
     else:
         skin = """
-        <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter v1.8 (English)">
+        <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter v1.0 (Py3)">
             <widget name="list" position="15,15" size="820,420" scrollbarMode="showOnDemand" transparent="1" />
             <eLabel position="15,450" size="820,1" backgroundColor="#555555" />
             <widget source="status" render="Label" position="15,465" size="820,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
@@ -65,7 +66,7 @@ class FeedHunter(Screen):
         Screen.__init__(self, session)
         self.feeds = []
         self.is_fetching = False
-        self["list"] = Listbox([])
+        self["list"] = MenuList([]) # استخدام MenuList
         self["list"].l.setBuildFunc(FeedEntry)
         
         if isFHD:
@@ -114,21 +115,19 @@ class FeedHunter(Screen):
             response.encoding = 'utf-8'
             html = response.text
             
+            # Pattern adjusted for better stability
             pattern = r"(\d+\.\d°[EW]).*?Frequency:.*?<b>(\d+)</b>.*?Pol:.*?<b>([HV])</b>.*?SR:.*?<b>(\d+)</b>.*?Category:.*?<b>(.*?)</b>.*?ℹ\s*(.*?)(?=<)"
             matches = re.findall(pattern, html, re.S | re.I)
             
             for (sat, freq, pol, sr, cat, event) in matches:
-                clean_event = re.sub(r'<[^>]+>', '', event).strip()
-                clean_cat = re.sub(r'<[^>]+>', '', cat).strip()
-                
                 new_feeds.append({
                     "sat": sat,
                     "orbital": satToOrbital(sat),
                     "freq": int(freq),
                     "pol": pol.upper(),
                     "sr": int(sr),
-                    "category": clean_cat if clean_cat else "Feed",
-                    "event": clean_event if clean_event else "Live Event",
+                    "category": re.sub(r'<[^>]+>', '', cat).strip() or "Feed",
+                    "event": re.sub(r'<[^>]+>', '', event).strip() or "Live Event",
                     "desc": "Feed"
                 })
         except Exception as e:
@@ -149,7 +148,8 @@ class FeedHunter(Screen):
     def startScan(self):
         selection = self["list"].getCurrent()
         if not selection or not self.feeds: return
-        f = selection[0]
+        # In MenuList, the item is returned directly or in a list depending on implementation
+        f = selection
         
         tuner_slot = -1
         for slot in nimmanager.nim_slots:
@@ -171,8 +171,8 @@ class FeedHunter(Screen):
         try:
             from Screens.ServiceScan import ServiceScan
             self.session.open(ServiceScan, tuner_slot, transponder=tp, scanList=[tp])
-        except:
-            pass
+        except Exception as e:
+            print("[FeedHunter] Scan Error: ", str(e))
 
 def main(session, **kwargs):
     session.open(FeedHunter)
@@ -180,7 +180,7 @@ def main(session, **kwargs):
 def Plugins(**kwargs):
     return PluginDescriptor(
         name="Feed Hunter",
-        description="Satelliweb Live Feeds with Category (Py3)",
+        description="Satelliweb Live Feeds (Py3 Fix)",
         where=PluginDescriptor.WHERE_PLUGINMENU, 
         fnc=main, 
         icon="plugin.png"
