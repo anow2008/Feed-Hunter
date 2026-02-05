@@ -8,7 +8,6 @@ from Components.NimManager import nimmanager
 from enigma import eTimer, getDesktop
 import re
 import threading
-import os
 
 try:
     import requests
@@ -22,6 +21,7 @@ isFHD = dSize.width() > 1280
 
 def satToOrbital(txt):
     try:
+        # استخراج الدرجة والاتجاه (E أو W)
         m = re.search(r"(\d+\.?\d*)\s*°?\s*([EW])", str(txt), re.I)
         if not m:
             return 0
@@ -35,27 +35,29 @@ def satToOrbital(txt):
 
 class FeedHunter(Screen):
     skin = """
-    <screen name="FeedHunter" position="center,center" size="{w},{h}" title="Feed Hunter v1.0">
+    <screen name="FeedHunter" position="center,center" size="{w},{h}" title="Feed Hunter v1.1">
         <widget name="list" position="20,20" size="{lw},{lh}" scrollbarMode="showOnDemand" />
         <eLabel position="20,{line_y}" size="{lw},2" backgroundColor="#555555" />
         <widget name="status_label" position="20,{stat_y}" size="{lw},80"
             font="Regular;{fs}" halign="center" valign="center"
             foregroundColor="#00FF00" />
+        <eLabel text="RED: Close | GREEN: Reload | OK: Scan" position="20,{hint_y}" size="{lw},40" font="Regular;20" halign="left" transparent="1" />
     </screen>""".format(
-        w=1200 if isFHD else 850,
-        h=820 if isFHD else 550,
-        lw=1160 if isFHD else 820,
-        lh=650 if isFHD else 420,
-        line_y=680 if isFHD else 450,
-        stat_y=700 if isFHD else 465,
-        fs=30 if isFHD else 22
+        w=1100 if isFHD else 850,
+        h=800 if isFHD else 550,
+        lw=1060 if isFHD else 810,
+        lh=600 if isFHD else 400,
+        line_y=630 if isFHD else 420,
+        stat_y=650 if isFHD else 435,
+        hint_y=740 if isFHD else 500,
+        fs=28 if isFHD else 20
     )
 
     def __init__(self, session):
         Screen.__init__(self, session)
         self.feeds = []
         self["list"] = SelectionList([])
-        self["status_label"] = Label("Connecting...")
+        self["status_label"] = Label("Initializing...")
         self["actions"] = ActionMap(
             ["OkCancelActions", "ColorActions"],
             {
@@ -76,34 +78,32 @@ class FeedHunter(Screen):
         self.onLayoutFinish.append(self.reloadData)
 
     def reloadData(self):
-        self["status_label"].setText("Fetching feeds...")
+        self["status_label"].setText("Connecting to Satelliweb...")
+        self.feeds = []
+        self["list"].setList([])
         threading.Thread(target=self.fetchFeeds, daemon=True).start()
 
     def fetchFeeds(self):
         new_feeds = []
         try:
             if requests:
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-                r = requests.get(URL, timeout=15, headers=headers)
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9'
+                }
+                r = requests.get(URL, timeout=15, headers=headers, verify=False)
                 r.encoding = 'utf-8'
+                html = r.text
 
-                # Pattern لاستخراج البيانات من السورس كود
-                pattern = r"(\d+\.\d°[EW]).*?Frequency:.*?<b>(\d+)</b>.*?Pol:.*?<b>([HV])</b>.*?SR:.*?<b>(\d+)</b>.*?Category:.*?<b>(.*?)</b>.*?ℹ\s*(.*?)(?=<)"
-                matches = re.findall(pattern, r.text, re.S | re.I)
+                # نمط مرن جداً للبحث عن البيانات الأساسية
+                # 1: الموقع المداري، 2: التردد، 3: الاستقطاب، 4: معدل الترميز
+                pattern = r"(\d+\.\d°[EW]).*?Frequency:.*?<b>(\d+)</b>.*?Pol:.*?<b>([HV])</b>.*?SR:.*?<b>(\d+)</b>"
+                matches = re.findall(pattern, html, re.S | re.I)
 
-                for (sat, freq, pol, sr, cat, event) in matches:
-                    clean_cat = re.sub(r'<[^>]+>', '', cat).strip()
-                    clean_event = re.sub(r'<[^>]+>', '', event).strip()
-
-                    display_text = "[{}] {}\n   {} | {} {} {}".format(
-                        clean_cat,
-                        clean_event,
-                        sat,
-                        freq,
-                        pol,
-                        sr
-                    )
-
+                for (sat, freq, pol, sr) in matches:
+                    # بناء نص العرض
+                    display_text = "Satellite: {} | Freq: {} | Pol: {} | SR: {}".format(sat, freq, pol, sr)
+                    
                     new_feeds.append((
                         display_text,
                         {
@@ -113,8 +113,10 @@ class FeedHunter(Screen):
                             "orbital": satToOrbital(sat)
                         }
                     ))
+            else:
+                print("[FeedHunter] Error: python-requests is missing")
         except Exception as e:
-            print("[FeedHunter] Error:", str(e))
+            print("[FeedHunter] Fetch Error:", str(e))
 
         self.feeds = new_feeds
         self.timer.start(100, True)
@@ -122,17 +124,16 @@ class FeedHunter(Screen):
     def updateUI(self):
         self["list"].setList(self.feeds)
         if self.feeds:
-            self["status_label"].setText("Found {} feeds | OK to Scan".format(len(self.feeds)))
+            self["status_label"].setText("Found {} Feeds | Select & Press OK to Scan".format(len(self.feeds)))
         else:
-            self["status_label"].setText("No feeds found | GREEN to retry")
+            self["status_label"].setText("No feeds found or Connection Error! Press GREEN to retry")
 
     def startScan(self):
         item = self["list"].getCurrent()
         if not item or not isinstance(item, tuple):
             return
 
-        f = item[1] # جلب قاموس البيانات
-
+        f = item[1]
         tuner_slot = -1
         for slot in nimmanager.nim_slots:
             if slot.isCompatible("DVB-S"):
@@ -140,9 +141,10 @@ class FeedHunter(Screen):
                 break
         
         if tuner_slot == -1:
+            self["status_label"].setText("Error: No DVB-S Tuner Found!")
             return
 
-        # بناء معاملات التردد للبحث
+        # إعدادات التي بي للبحث
         tp = {
             "type": "S2",
             "frequency": f["freq"] * 1000,
@@ -169,8 +171,8 @@ def main(session, **kwargs):
 def Plugins(**kwargs):
     return PluginDescriptor(
         name="Feed Hunter",
-        description="Satelliweb Live Feeds",
+        description="Satelliweb Live Feeds Scanner",
         where=PluginDescriptor.WHERE_PLUGINMENU,
-        icon="plugin.png", # تأكد أن الملف بجانب الكود بهذا الاسم
+        icon="plugin.png",
         fnc=main
     )
