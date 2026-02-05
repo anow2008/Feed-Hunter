@@ -5,31 +5,33 @@ from Components.ActionMap import ActionMap
 from Components.Label import Label
 from Components.MenuList import MenuList
 from Components.NimManager import nimmanager
-from enigma import eTimer, getDesktop
+from enigma import eTimer
 import re
 import threading
+import json
 
 try:
     import requests
-    # تعطيل تحذيرات شهادات الأمان لضمان الاتصال
     from requests.packages.urllib3.exceptions import InsecureRequestWarning
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 except ImportError:
     requests = None
 
-URL = "https://www.satelliweb.com/index.php?section=livef"
+# استخدام رابط بروكسي لتجاوز الحظر
+TARGET_URL = "https://www.satelliweb.com/index.php?section=livef"
+PROXY_GATEWAY = "https://api.allorigins.win/get?url="
 
 class FeedHunter(Screen):
     skin = """
-    <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter v1.1 (Multi-Source)">
-        <widget name="list" position="20,20" size="810,420" scrollbarMode="showOnDemand" transparent="1" />
-        <widget name="status_label" position="20,460" size="810,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
+    <screen name="FeedHunter" position="center,center" size="900,600" title="Feed Hunter v1.2">
+        <widget name="list" position="20,20" size="860,460" scrollbarMode="showOnDemand" transparent="1" />
+        <widget name="status_label" position="20,500" size="860,60" font="Regular;24" halign="center" valign="center" foregroundColor="#00FF00" />
     </screen>"""
 
     def __init__(self, session):
         Screen.__init__(self, session)
         self["list"] = MenuList([])
-        self["status_label"] = Label("Initialising connection...")
+        self["status_label"] = Label("Connecting to server...")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
             "ok": self.startScan,
             "cancel": self.close,
@@ -39,71 +41,54 @@ class FeedHunter(Screen):
         self.feed_data = []
         self.final_list = []
         self.timer = eTimer()
-        try:
-            self.timer.timeout.connect(self.showResults)
-        except:
-            self.timer.callback.append(self.showResults)
+        try: self.timer.timeout.connect(self.showResults)
+        except: self.timer.callback.append(self.showResults)
 
         self.onLayoutFinish.append(self.reloadData)
 
     def reloadData(self):
-        self["status_label"].setText("Fetching data... Please wait up to 20s")
+        self["status_label"].setText("Refreshing feeds via Proxy...")
         self["list"].setList([])
         threading.Thread(target=self.fetchFeeds, daemon=True).start()
 
     def fetchFeeds(self):
-        display_list = []
-        technical_data = []
-        
-        # محاولة الاتصال عبر أكثر من وسيلة
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124'}
-        
-        success = False
+        d_list = []
+        t_data = []
         try:
-            # المحاولة الأولى: مباشر مع تعطيل التحقق من الشهادة
-            r = requests.get(URL, timeout=15, headers=headers, verify=False)
+            # محاولة الجلب عبر البروكسي لتجنب حظر الـ IP
+            full_url = PROXY_GATEWAY + requests.utils.quote(TARGET_URL)
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            r = requests.get(full_url, timeout=20, verify=False)
+            
             if r.status_code == 200:
-                success = True
-                html = r.text
-            else:
-                # المحاولة الثانية: استخدام بروكسي خارجي لتجاوز الحظر
-                proxy_url = "https://api.allorigins.win/get?url=" + requests.utils.quote(URL)
-                r = requests.get(proxy_url, timeout=15, verify=False)
-                import json
-                html = json.loads(r.text)['contents']
-                success = True
-        except Exception as e:
-            print("Fetch Error:", str(e))
-            success = False
-
-        if success:
-            try:
+                html = json.loads(r.text).get('contents', '')
                 pattern = r"(\d+\.\d°[EW]).*?Frequency:.*?<b>(\d+)</b>.*?Pol:.*?<b>([HV])</b>.*?SR:.*?<b>(\d+)</b>.*?Category:.*?<b>(.*?)</b>.*?ℹ\s*(.*?)(?=<)"
                 matches = re.findall(pattern, html, re.S | re.I)
                 
                 for (sat, freq, pol, sr, cat, event) in matches:
-                    c_event = re.sub(r'<[^>]+>', '', event).strip()
-                    display_list.append("{} - {} ({} {} {})".format(sat, c_event, freq, pol, sr))
+                    event_name = re.sub(r'<[^>]+>', '', event).strip()
+                    d_list.append("{} - {} ({} {} {})".format(sat, event_name, freq, pol, sr))
                     
+                    # حساب الموضع المداري
                     m = re.search(r"(\d+\.?\d*)\s*°?\s*([EW])", sat, re.I)
                     orb = 0
                     if m:
                         p = float(m.group(1))
                         orb = int((360 - p) * 10) if m.group(2).upper() == 'W' else int(p * 10)
-                    technical_data.append({"freq": int(freq), "pol": pol.upper(), "sr": int(sr), "orbital": orb})
-            except:
-                pass
+                    t_data.append({"freq": int(freq), "pol": pol.upper(), "sr": int(sr), "orbital": orb})
+        except Exception as e:
+            print("[FeedHunter] Error:", str(e))
 
-        self.feed_data = technical_data
-        self.final_list = display_list
+        self.feed_data = t_data
+        self.final_list = d_list
         self.timer.start(100, True)
 
     def showResults(self):
         if self.final_list:
             self["list"].setList(self.final_list)
-            self["status_label"].setText("Found {} feeds. Select & OK".format(len(self.final_list)))
+            self["status_label"].setText("Found {} Feeds | OK to Scan".format(len(self.final_list)))
         else:
-            self["status_label"].setText("Error: Website Blocked or No Internet!")
+            self["status_label"].setText("Connection Failed. Check Internet or try again.")
 
     def startScan(self):
         idx = self["list"].getSelectedIndex()
@@ -125,4 +110,4 @@ def main(session, **kwargs):
     session.open(FeedHunter)
 
 def Plugins(**kwargs):
-    return PluginDescriptor(name="Feed Hunter", description="Satelliweb Live Feeds", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main)
+    return PluginDescriptor(name="Feed Hunter", description="Satelliweb Live Feeds (Proxy Mode)", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main)
