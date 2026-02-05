@@ -4,9 +4,9 @@ from Screens.Screen import Screen
 from Components.ActionMap import ActionMap
 from Components.Sources.StaticText import StaticText
 from Components.NimManager import nimmanager
-from Components.MenuList import MenuList  # تم استبدال Listbox بـ MenuList
-from Components.MultiContent import MultiContentEntryText
-from enigma import eListboxPythonMultiContent, gFont, eTimer, getDesktop
+# الحل الصحيح لاستدعاء Listbox في OpenATV 7.x
+from Components.GUIComponent import GUIComponent
+from enigma import eListbox, eListboxPythonMultiContent, gFont, eTimer, getDesktop
 import re
 import threading
 
@@ -14,6 +14,28 @@ try:
     import requests
 except ImportError:
     requests = None
+
+# تعريف كلاس الـ Listbox بشكل يدوي لضمان التوافقية
+class Listbox(GUIComponent):
+    def __init__(self):
+        GUIComponent.__init__(self)
+        self.instance = eListbox()
+        self.l = eListboxPythonMultiContent()
+        self.instance.setContent(self.l)
+
+    def setList(self, l):
+        self.l.setList(l)
+
+    def getCurrent(self):
+        return self.instance.getCurrentSelection()
+
+    def GUIcreate(self, parent):
+        self.instance = eListbox(parent)
+        self.instance.setContent(self.l)
+
+    def GUIdelete(self):
+        self.instance.setContent(None)
+        self.instance = None
 
 URL = "https://www.satelliweb.com/index.php?section=livef"
 dSize = getDesktop(0).size()
@@ -31,6 +53,10 @@ def satToOrbital(txt):
     except:
         return 0
 
+def MultiContentEntryText(pos, size, font, color, text):
+    from enigma import RT_HALIGN_LEFT, RT_VALIGN_CENTER
+    return (eListboxPythonMultiContent.TYPE_TEXT, pos[0], pos[1], size[0], size[1], font, RT_HALIGN_LEFT | RT_VALIGN_CENTER, text, color)
+
 def FeedEntry(f):
     if f is None: return []
     width = 1100 if isFHD else 800
@@ -39,7 +65,6 @@ def FeedEntry(f):
     cat = f.get("category", "Feed")
     event = f.get("event", "No Name")
     display_name = "[{}] {}".format(cat, event)
-    
     details = "{} | {} {} {} | {}".format(str(f.get('sat','')), str(f.get('freq','')), str(f.get('pol','')), str(f.get('sr','')), str(f.get('desc','')))
     
     res.append(MultiContentEntryText(pos=(10, 5), size=(width, 45 if isFHD else 30), font=0, color=0xFFFFFF, text=display_name))
@@ -49,14 +74,14 @@ def FeedEntry(f):
 class FeedHunter(Screen):
     if isFHD:
         skin = """
-        <screen name="FeedHunter" position="center,center" size="1200,820" title="Feed Hunter v1.0 (Py3)">
+        <screen name="FeedHunter" position="center,center" size="1200,820" title="Feed Hunter v1.0 (Py3 Fix)">
             <widget name="list" position="20,20" size="1160,650" scrollbarMode="showOnDemand" transparent="1" />
             <eLabel position="20,680" size="1160,2" backgroundColor="#555555" />
             <widget source="status" render="Label" position="20,700" size="1160,80" font="Regular;30" halign="center" valign="center" foregroundColor="#00FF00" />
         </screen>"""
     else:
         skin = """
-        <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter v1.0 (Py3)">
+        <screen name="FeedHunter" position="center,center" size="850,550" title="Feed Hunter v1.0 (Py3 Fix)">
             <widget name="list" position="15,15" size="820,420" scrollbarMode="showOnDemand" transparent="1" />
             <eLabel position="15,450" size="820,1" backgroundColor="#555555" />
             <widget source="status" render="Label" position="15,465" size="820,60" font="Regular;22" halign="center" valign="center" foregroundColor="#00FF00" />
@@ -66,7 +91,7 @@ class FeedHunter(Screen):
         Screen.__init__(self, session)
         self.feeds = []
         self.is_fetching = False
-        self["list"] = MenuList([]) # استخدام MenuList
+        self["list"] = Listbox() # استخدام الكلاس المعدل
         self["list"].l.setBuildFunc(FeedEntry)
         
         if isFHD:
@@ -87,10 +112,7 @@ class FeedHunter(Screen):
         }, -1)
         
         self.timer = eTimer()
-        try:
-            self.timer.timeout.connect(self.updateUI)
-        except:
-            self.timer_conn = self.timer.timeout.connect(self.updateUI)
+        self.timer.callback.append(self.updateUI)
             
         self.onClose.append(self.cleanup)
         self.reloadData()
@@ -114,74 +136,46 @@ class FeedHunter(Screen):
             response = requests.get(URL, timeout=15, headers=headers)
             response.encoding = 'utf-8'
             html = response.text
-            
-            # Pattern adjusted for better stability
             pattern = r"(\d+\.\d°[EW]).*?Frequency:.*?<b>(\d+)</b>.*?Pol:.*?<b>([HV])</b>.*?SR:.*?<b>(\d+)</b>.*?Category:.*?<b>(.*?)</b>.*?ℹ\s*(.*?)(?=<)"
             matches = re.findall(pattern, html, re.S | re.I)
-            
             for (sat, freq, pol, sr, cat, event) in matches:
                 new_feeds.append({
-                    "sat": sat,
-                    "orbital": satToOrbital(sat),
-                    "freq": int(freq),
-                    "pol": pol.upper(),
-                    "sr": int(sr),
-                    "category": re.sub(r'<[^>]+>', '', cat).strip() or "Feed",
-                    "event": re.sub(r'<[^>]+>', '', event).strip() or "Live Event",
-                    "desc": "Feed"
+                    "sat": sat, "orbital": satToOrbital(sat), "freq": int(freq), "pol": pol.upper(),
+                    "sr": int(sr), "category": re.sub(r'<[^>]+>', '', cat).strip() or "Feed",
+                    "event": re.sub(r'<[^>]+>', '', event).strip() or "Live Event", "desc": "Feed"
                 })
-        except Exception as e:
-            print("[FeedHunter] Error: ", str(e))
-            
+        except Exception as e: print("[FeedHunter] Error: ", str(e))
         self.feeds = new_feeds
         self.is_fetching = False
         self.timer.start(100, True)
 
     def updateUI(self):
         self["list"].setList(self.feeds)
-        if self.feeds:
-            status = "Found {} feeds | [OK] Scan | [GREEN] Refresh".format(len(self.feeds))
-        else:
-            status = "No feeds found at the moment!"
+        status = "Found {} feeds | [OK] Scan | [GREEN] Refresh".format(len(self.feeds)) if self.feeds else "No feeds found!"
         self["status"].setText(status)
 
     def startScan(self):
         selection = self["list"].getCurrent()
         if not selection or not self.feeds: return
-        # In MenuList, the item is returned directly or in a list depending on implementation
-        f = selection
-        
+        f = selection[0]
         tuner_slot = -1
         for slot in nimmanager.nim_slots:
             if slot.isCompatible("DVB-S"):
                 tuner_slot = slot.slot
                 break
-        
         if tuner_slot == -1: return
-
         tp = {
-            "type": "S2",
-            "frequency": f["freq"] * 1000, 
-            "symbol_rate": f["sr"] * 1000, 
-            "polarization": 0 if f["pol"] == "H" else 1,
-            "fec_inner": 0, "system": 1, "modulation": 2, "inversion": 2, "roll_off": 3, "pilot": 2,
-            "orbital_position": f["orbital"]
+            "type": "S2", "frequency": f["freq"] * 1000, "symbol_rate": f["sr"] * 1000, 
+            "polarization": 0 if f["pol"] == "H" else 1, "fec_inner": 0, "system": 1, 
+            "modulation": 2, "inversion": 2, "roll_off": 3, "pilot": 2, "orbital_position": f["orbital"]
         }
-        
         try:
             from Screens.ServiceScan import ServiceScan
             self.session.open(ServiceScan, tuner_slot, transponder=tp, scanList=[tp])
-        except Exception as e:
-            print("[FeedHunter] Scan Error: ", str(e))
+        except: pass
 
 def main(session, **kwargs):
     session.open(FeedHunter)
 
 def Plugins(**kwargs):
-    return PluginDescriptor(
-        name="Feed Hunter",
-        description="Satelliweb Live Feeds (Py3 Fix)",
-        where=PluginDescriptor.WHERE_PLUGINMENU, 
-        fnc=main, 
-        icon="plugin.png"
-    )
+    return PluginDescriptor(name="Feed Hunter", description="Satelliweb Live Feeds (Fixed)", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main, icon="plugin.png")
