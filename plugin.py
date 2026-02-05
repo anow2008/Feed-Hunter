@@ -5,7 +5,7 @@ from Components.ActionMap import ActionMap
 from Components.Label import Label
 from Components.SelectionList import SelectionList
 from Components.NimManager import nimmanager
-from enigma import eTimer, getDesktop, gFont, RT_HALIGN_LEFT, RT_VALIGN_CENTER
+from enigma import eTimer, getDesktop
 import re
 import threading
 
@@ -18,20 +18,11 @@ URL = "https://www.satelliweb.com/index.php?section=livef"
 dSize = getDesktop(0).size()
 isFHD = dSize.width() > 1280
 
-def satToOrbital(txt):
-    try:
-        m = re.search(r"(\d+\.?\d*)\s*°?\s*([EW])", str(txt), re.I)
-        if not m: return 0
-        pos = float(m.group(1))
-        direction = m.group(2).upper()
-        if direction == 'W': return int((360 - pos) * 10)
-        return int(pos * 10)
-    except: return 0
-
 class FeedHunter(Screen):
+    # تم إضافة ألوان صريحة للنص (foregroundColor) لضمان ظهوره على أي سكين
     skin = """
-    <screen name="FeedHunter" position="center,center" size="{w},{h}" title="Feed Hunter v1.0 (OpenATV 7.6)">
-        <widget name="list" position="20,20" size="{lw},{lh}" scrollbarMode="showOnDemand" />
+    <screen name="FeedHunter" position="center,center" size="{w},{h}" title="Feed Hunter v1.0">
+        <widget name="list" position="20,20" size="{lw},{lh}" scrollbarMode="showOnDemand" itemHeight="60" foregroundColor="#ffffff" foregroundColorSelected="#ffffff" backgroundColorSelected="#002d5d" />
         <eLabel position="20,{line_y}" size="{lw},2" backgroundColor="#555555" />
         <widget name="status_label" position="20,{stat_y}" size="{lw},80" font="Regular;{fs}" halign="center" valign="center" foregroundColor="#00FF00" />
     </screen>""".format(
@@ -45,7 +36,7 @@ class FeedHunter(Screen):
         Screen.__init__(self, session)
         self.feeds = []
         self["list"] = SelectionList([])
-        self["status_label"] = Label("Connecting...")
+        self["status_label"] = Label("Initialising...")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
             "ok": self.startScan,
             "cancel": self.close,
@@ -55,46 +46,61 @@ class FeedHunter(Screen):
 
         self.timer = eTimer()
         try:
-            self.timer_conn = self.timer.timeout.connect(self.updateUI)
+            self.timer.timeout.connect(self.updateUI)
         except:
             self.timer.callback.append(self.updateUI)
 
         self.onLayoutFinish.append(self.reloadData)
 
     def reloadData(self):
-        self["status_label"].setText("Fetching feeds...")
+        self["status_label"].setText("Connecting to Satelliweb...")
         threading.Thread(target=self.fetchFeeds, daemon=True).start()
 
     def fetchFeeds(self):
         new_feeds = []
         try:
             if requests:
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                r = requests.get(URL, timeout=10, headers=headers)
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                r = requests.get(URL, timeout=15, headers=headers)
                 r.encoding = 'utf-8'
+                # نمط البحث (Pattern) معدل ليكون أكثر مرونة
                 pattern = r"(\d+\.\d°[EW]).*?Frequency:.*?<b>(\d+)</b>.*?Pol:.*?<b>([HV])</b>.*?SR:.*?<b>(\d+)</b>.*?Category:.*?<b>(.*?)</b>.*?ℹ\s*(.*?)(?=<)"
                 matches = re.findall(pattern, r.text, re.S | re.I)
+                
                 for (sat, freq, pol, sr, cat, event) in matches:
-                    name = "[{}] {}".format(cat.strip(), event.strip())
-                    details = "{} | {} {} {}".format(sat, freq, pol, sr)
-                    # تخزين البيانات في القائمة بشكل مبسط لمنع كراش الرسم
-                    display_text = "{}\n   {}".format(name, details)
+                    clean_cat = re.sub(r'<[^>]+>', '', cat).strip()
+                    clean_event = re.sub(r'<[^>]+>', '', event).strip()
+                    display_text = "{} - {} ({} {} {})".format(sat, clean_event, freq, pol, sr)
+                    
+                    # تحويل القمر لإحداثيات رقمية للجهاز
+                    m = re.search(r"(\d+\.?\d*)\s*°?\s*([EW])", sat, re.I)
+                    orbital = 0
+                    if m:
+                        pos = float(m.group(1))
+                        orbital = int((360 - pos) * 10) if m.group(2).upper() == 'W' else int(pos * 10)
+
                     new_feeds.append((display_text, {
-                        "freq": int(freq), "pol": pol.upper(), "sr": int(sr), "orbital": satToOrbital(sat)
+                        "freq": int(freq), "pol": pol.upper(), "sr": int(sr), "orbital": orbital
                     }))
+            else:
+                print("Requests module missing")
         except Exception as e:
-            print("Error:", str(e))
+            print("Fetch Error:", str(e))
+            
         self.feeds = new_feeds
         self.timer.start(100, True)
 
     def updateUI(self):
-        self["list"].setList(self.feeds)
-        self["status_label"].setText("Found {} feeds | OK to Scan".format(len(self.feeds)))
+        if len(self.feeds) > 0:
+            self["list"].setList(self.feeds)
+            self["status_label"].setText("Found {} feeds | Press OK to Scan".format(len(self.feeds)))
+        else:
+            self["status_label"].setText("No feeds found! Press GREEN to retry.")
 
     def startScan(self):
         item = self["list"].getCurrent()
-        if not item or not item[0]: return
-        f = item[0][1] # استخراج بيانات التردد
+        if not item: return
+        f = item[1]
         tuner_slot = -1
         for slot in nimmanager.nim_slots:
             if slot.isCompatible("DVB-S"):
