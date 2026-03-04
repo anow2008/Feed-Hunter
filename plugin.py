@@ -16,17 +16,17 @@ except:
 
 class FeedHunter(Screen):
     skin = """
-    <screen position="center,center" size="850,550" title="Feed Hunter Pro - Full Data Auto-Fill">
+    <screen position="center,center" size="850,550" title="Feed Hunter Pro - ID & Data">
         <widget name="list" position="10,10" size="830,420" scrollbarMode="showOnDemand" />
         <widget name="status_label" position="10,440" size="830,40" font="Regular;24" halign="center" foregroundColor="#00FF00" />
-        <eLabel text="OK: Auto-Scan | GREEN: Reload | RED: Exit" position="10,500" size="830,30" font="Regular;20" halign="left" transparent="1" />
+        <eLabel text="OK: Scan | GREEN: Reload | RED: Exit" position="10,500" size="830,30" font="Regular;20" halign="left" transparent="1" />
     </screen>"""
 
     def __init__(self, session):
         Screen.__init__(self, session)
         self.feeds = []
         self["list"] = SelectionList([])
-        self["status_label"] = Label("Loading Full Feed Data...")
+        self["status_label"] = Label("Loading Feeds with IDs...")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
             "ok": self.startScan, "cancel": self.close, "red": self.close, "green": self.reloadData
         }, -1)
@@ -36,7 +36,7 @@ class FeedHunter(Screen):
         self.onLayoutFinish.append(self.reloadData)
 
     def reloadData(self):
-        self["status_label"].setText("Fetching and Parsing Telegram...")
+        self["status_label"].setText("Fetching from Telegram...")
         self.feeds = []
         threading.Thread(target=self.fetchFeeds).start()
 
@@ -47,46 +47,43 @@ class FeedHunter(Screen):
         
         try:
             r = requests.get(url, timeout=15, headers=headers, verify=False)
+            # تقسيم الصفحة لرسائل
             messages = r.text.split('<div class="tgme_widget_message_text')
             
             for msg in messages:
-                # 1. استخراج القمر (مثال: 7.0°E)
+                # 1. استخراج القمر (مثال: 7.0E)
                 sat_match = re.search(r"(\d+\.?\d*)°?\s*([EW])", msg)
                 orb = 70
+                sat_name = "7.0E"
                 if sat_match:
                     pos = float(sat_match.group(1))
                     direction = sat_match.group(2).upper()
                     orb = int((360 - pos) * 10) if direction == 'W' else int(pos * 10)
+                    sat_name = "%s%s" % (sat_match.group(1), direction)
 
-                # 2. استخراج التردد والقطبية والترميز (مثال: 11190 H 7200)
+                # 2. استخراج التردد والقطبية والترميز
                 tp_match = re.search(r"(\d{5})\s+([HVhv])\s+(\d{4,5})", msg)
                 if tp_match:
                     freq = int(tp_match.group(1))
                     pol = tp_match.group(2).upper()
                     sr = int(tp_match.group(3))
+                    
+                    # 3. استخراج الـ ID (اسم القناة)
+                    # بيبحث عن كلمة ID: وياخد الكلام اللي بعدها لحد نهاية السطر أو أول علامة <
+                    id_match = re.search(r"ID:\s*(.*?)($|<|#)", msg, re.I)
+                    channel_id = id_match.group(1).strip() if id_match else "No Name"
 
-                    # --- استخراج البيانات المتقدمة للبحث الآلي ---
-                    
-                    # نظام البث (System)
-                    sys = 1 if "DVB-S2" in msg.upper() else 0 # 1=DVB-S2, 0=DVB-S
-                    
-                    # نوع التعديل (Modulation)
-                    mod = 2 if "8PSK" in msg.upper() else 1   # 2=8PSK, 1=QPSK
-                    
-                    # تصحيح الخطأ (FEC)
-                    fec = 0 # الافتراضي Auto
-                    fec_map = {"1/2": 1, "2/3": 2, "3/4": 3, "5/6": 4, "7/8": 5, "8/9": 6, "3/5": 7, "4/5": 8, "9/10": 9}
-                    for key in fec_map:
-                        if key in msg:
-                            fec = fec_map[key]
-                            break
+                    # 4. تفاصيل البث
+                    sys = 1 if "DVB-S2" in msg.upper() else 0
+                    mod = 2 if "8PSK" in msg.upper() else 1
 
-                    display = "Feed: %d %s %d (S2|%s|FEC:%s)" % (freq, pol, sr, "8PSK" if mod==2 else "QPSK", "Auto" if fec==0 else "")
+                    # شكل العرض في القائمة (اسم القناة + التردد + القمر)
+                    display = "[%s] %s | %d %s %d" % (sat_name, channel_id, freq, pol, sr)
                     
                     if not any(f[1]["freq"] == freq for f in new_feeds):
                         new_feeds.append((display, {
                             "freq": freq, "pol": pol, "sr": sr, "orb": orb,
-                            "sys": sys, "mod": mod, "fec": fec
+                            "sys": sys, "mod": mod, "name": channel_id
                         }))
                     
         except: pass
@@ -95,9 +92,9 @@ class FeedHunter(Screen):
         self.timer.start(100, True)
 
     def updateUI(self):
-        self.feeds.reverse()
+        self.feeds.reverse() # الأحدث فوق
         self["list"].setList(self.feeds)
-        self["status_label"].setText("Found %d Feeds. Press OK to scan." % len(self.feeds))
+        self["status_label"].setText("Found %d Feeds. Press OK to Scan." % len(self.feeds))
 
     def startScan(self):
         item = self["list"].getCurrent()
@@ -110,28 +107,19 @@ class FeedHunter(Screen):
                 tuner_slot = slot.slot; break
         if tuner_slot == -1: return
 
-        # بناء كائن التردد بكل التفاصيل المستخرجة
         tp = {
-            "type": "S2", 
-            "frequency": f["freq"] * 1000, 
-            "symbol_rate": f["sr"] * 1000,
-            "polarization": 0 if f["pol"] == "H" else 1, 
-            "fec_inner": f["fec"],
-            "system": f["sys"], 
-            "modulation": f["mod"], 
-            "inversion": 2, 
-            "roll_off": 3,
-            "pilot": 2, 
-            "orbital_position": f["orb"]
+            "type": "S2", "frequency": f["freq"] * 1000, "symbol_rate": f["sr"] * 1000,
+            "polarization": 0 if f["pol"] == "H" else 1, "fec_inner": 0,
+            "system": f["sys"], "modulation": f["mod"], "inversion": 2, 
+            "roll_off": 3, "pilot": 2, "orbital_position": f["orb"]
         }
         
         try:
             from Screens.ServiceScan import ServiceScan
-            # الآن ستفتح صفحة البحث وبها كل القيم (8PSK, DVB-S2, FEC 3/4) جاهزة تماماً
             self.session.open(ServiceScan, tuner_slot, transponder=tp, scanList=[tp])
         except:
             self["status_label"].setText("Scan Error!")
 
 def main(session, **kwargs): session.open(FeedHunter)
 def Plugins(**kwargs):
-    return PluginDescriptor(name="Feed Hunter Pro", description="Auto-Fill Scan Data", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main)
+    return PluginDescriptor(name="Feed Hunter ID", description="Auto Scan with Channel ID", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main)
