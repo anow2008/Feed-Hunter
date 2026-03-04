@@ -122,4 +122,10 @@ class FeedHunter(Screen):
 
 def main(session, **kwargs): session.open(FeedHunter)
 def Plugins(**kwargs):
-    return PluginDescriptor(name="Feed Hunter ID", description="Auto Scan with Channel ID", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main)
+    return PluginDescriptor(
+        name="Feed Hunter Pro", 
+        description="Auto Scan Telegram Feeds", 
+        where=PluginDescriptor.WHERE_PLUGINMENU, 
+        icon="plugin.png",  # السطر ده بيأكد على مسار الأيقونة
+        fnc=main
+    )
