@@ -32,7 +32,7 @@ def FeedListEntry(sat, freq, pol, sr, category, enc, info):
 
 class FeedHunter(Screen):
     skin = """
-    <screen position="center,center" size="900,600" title="Feed Hunter Pro - Detailed View">
+    <screen position="center,center" size="900,600" title="Feed Hunter - Detailed View">
         <widget name="list" position="10,10" size="880,480" scrollbarMode="showOnDemand" selectionColor="#333333" />
         <eLabel position="10,500" size="880,2" backgroundColor="#555555" />
         <widget name="status_label" position="10,510" size="880,30" font="Regular;22" halign="center" foregroundColor="#00FF00" />
