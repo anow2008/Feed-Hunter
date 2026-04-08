@@ -62,7 +62,7 @@ class FeedHunter(Screen):
 
     def fetchData(self):
         new_list = []
-        url = "https://www.satelliweb.com/index.php?section=livef"
+        url = "https://www.satelliweb.com/index.php?section=livef&langue=en"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         
         try:
