@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-# تم التطوير بواسطة محمد - نسخة بايثون 3
-# عرض تفصيلي للفيدات (Sat, Freq, Pol, SR, Category, Encryption, Time)
 
 from Plugins.Plugin import PluginDescriptor
 from Screens.Screen import Screen
