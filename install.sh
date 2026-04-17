@@ -1,69 +1,44 @@
 #!/bin/sh
-# ==========================================
-#  Feed-Hunter Smart Installer (Forced Fix)
-#  Author : anow2008
-# ==========================================
 
-PLUGIN="FeedHunter"
-BASE_DIR="/usr/lib/enigma2/python/Plugins/Extensions"
-TARGET="$BASE_DIR/$PLUGIN"
-ZIP_URL="https://github.com/anow2008/Feed-Hunter/archive/refs/heads/main.tar.gz"
-LOG="/tmp/feedhunter_install.log"
+# مسارات واضحة ومباشرة
+PLUGIN_DIR="/usr/lib/enigma2/python/Plugins/Extensions/FeedHunter"
+URL="https://github.com/anow2008/Feed-Hunter/archive/refs/heads/main.tar.gz"
 
-echo "🔧 Starting Forced Installation..." | tee $LOG
+echo "Starting..."
 
-# دالة الريستارت القوية جداً
-force_restart() {
-    echo "▶ Rebooting Enigma2 UI..."
-    killall -9 enigma2 > /dev/null 2>&1
-    init 3 > /dev/null 2>&1
-}
-
-# 1. تنظيف شامل
-rm -rf "$TARGET"
-rm -rf /tmp/fh_work
+# 1. مسح شامل لأي حاجة قديمة عشان ميعلقش
+rm -rf "$PLUGIN_DIR"
+rm -rf /tmp/Feed-Hunter-main
 rm -f /tmp/main.tar.gz
-mkdir -p /tmp/fh_work
 
-# 2. التحميل
-echo "⬇ Downloading..."
-wget --no-check-certificate -O /tmp/main.tar.gz "$ZIP_URL" >> $LOG 2>&1
+# 2. التحميل مع تجاهل الشهادات تماماً وبأمر مباشر
+cd /tmp
+wget --no-check-certificate "$URL" -O main.tar.gz
 
-# 3. فك الضغط في مجلد مؤقت
-echo "📦 Extracting..."
-tar -xzf /tmp/main.tar.gz -C /tmp/fh_work || exit 1
-
-# 4. البحث الذكي عن الملفات (هنا الحل)
-# السطر ده بيدور على ملف plugin.py في أي مكان جوه الملف اللي نزل
-REAL_SRC=$(find /tmp/fh_work -name "plugin.py" | head -n 1 | xargs dirname)
-
-if [ -z "$REAL_SRC" ]; then
-    echo "❌ ERROR: Could not find plugin.py!" | tee -a $LOG
-    force_restart
+# 3. التأكد إن الملف نزل فعلاً قبل ما نكمل
+if [ ! -f main.tar.gz ]; then
+    echo "Download Failed! Check Internet."
+    killall -9 enigma2 # حتى لو فشل خليه يعمل ريستارت عشان تشوف إنه شغال
     exit 1
 fi
 
-echo "✅ Found files at: $REAL_SRC" | tee -a $LOG
+# 4. فك الضغط
+tar -xzf main.tar.gz
 
-# 5. النقل للمسار النهائي
-mkdir -p "$TARGET"
-cp -r "$REAL_SRC"/* "$TARGET/"
+# 5. نقل المجلد (بالمسار اللي شفناه في المستودع بتاعك)
+mkdir -p "$PLUGIN_DIR"
+if [ -d "Feed-Hunter-main/FeedHunter" ]; then
+    cp -r Feed-Hunter-main/FeedHunter/* "$PLUGIN_DIR/"
+else
+    cp -r Feed-Hunter-main/* "$PLUGIN_DIR/"
+fi
 
-# 6. الصلاحيات وتنظيف الكاش
-chmod -R 755 "$TARGET"
-find "$TARGET" -name "*.pyc" -delete
-touch "$TARGET/__init__.py"
+# 6. صلاحيات ومسح كاش
+chmod -R 755 "$PLUGIN_DIR"
+find "$PLUGIN_DIR" -name "*.pyc" -delete
 
-# 7. تثبيت المكتبات (مهمة جداً لظهور البلجن)
-echo "📚 Installing dependencies..."
-opkg update > /dev/null
-opkg install python3-requests python3-beautifulsoup4 > /dev/null 2>&1
-
-# 8. الريستارت الإجباري
-echo "✅ Finished. Restarting..."
+# 7. ريستارت "غصب" (Force)
+echo "Done. Rebooting Enigma2..."
 sync
-force_restart
-
-echo "================================="
-echo " Done! Check your plugin list."
-echo "================================="
+killall -9 enigma2
+init 3
