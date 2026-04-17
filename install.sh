@@ -1,49 +1,35 @@
 #!/bin/sh
-# ==============================================
-# Feed-Hunter Targeted Installer for anow2008
-# ==============================================
-
 PLUGIN_NAME="FeedHunter"
 PLUGIN_DIR="/usr/lib/enigma2/python/Plugins/Extensions/$PLUGIN_NAME"
 URL="https://github.com/anow2008/Feed-Hunter/archive/refs/heads/main.zip"
 
-echo "----------------------------------------------"
-echo "Installing Feed-Hunter for Mohamed..."
-echo "----------------------------------------------"
+echo "[+] Forced Cleaning..."
+rm -rf "$PLUGIN_DIR"
+rm -f /tmp/fh.zip
+mkdir -p "$PLUGIN_DIR"
 
-# 1. تنظيف قديم وتحميل
-rm -rf "$PLUGIN_DIR" /tmp/fh_extract
-mkdir -p /tmp/fh_extract
+echo "[+] Downloading & Extracting..."
 wget --no-check-certificate "$URL" -O /tmp/fh.zip
+unzip -o /tmp/fh.zip -d /tmp/
 
-# 2. فك الضغط
-unzip -o /tmp/fh.zip -d /tmp/fh_extract
+# النقل المباشر من المجلد الفرعي
+cp -r /tmp/Feed-Hunter-main/FeedHunter/* "$PLUGIN_DIR/"
 
-# 3. النقل الذكي (هنا التعديل اللي هيحلك المشكلة)
-# إحنا هندخل جوه المجلد المزدوج وناخد الملفات اللي جواه
-if [ -d "/tmp/fh_extract/Feed-Hunter-main/FeedHunter" ]; then
-    cp -r /tmp/fh_extract/Feed-Hunter-main/FeedHunter/* "$PLUGIN_DIR/"
-    echo "[+] Files moved successfully to Extensions/$PLUGIN_NAME"
-else
-    # حل احتياطي لو غيرت اسم المجلد
-    SOURCE=$(find /tmp/fh_extract -name "plugin.py" | head -n 1 | xargs dirname)
-    cp -r "$SOURCE"/* "$PLUGIN_DIR/"
-fi
-
-# 4. التأكد من الملفات الأساسية والصلاحيات
-[ ! -f "$PLUGIN_DIR/__init__.py" ] && touch "$PLUGIN_DIR/__init__.py"
+echo "[+] Fixing Permissions & Bytecode..."
+# مسح أي ملفات بايثون قديمة مجمعة ممكن تسبب تعارض
+find "$PLUGIN_DIR" -name "*.pyc" -delete
+find "$PLUGIN_DIR" -name "*.pyo" -delete
 chmod -R 755 "$PLUGIN_DIR"
 
-# 5. تنظيف
-rm -rf /tmp/fh.zip /tmp/fh_extract
+# التأكد من وجود ملف التعريف
+touch "$PLUGIN_DIR/__init__.py"
 
-# 6. تثبيت المكتبات (عشان البلجن يشتغل مش بس يظهر)
-echo "[+] Installing dependencies..."
-opkg update > /dev/null
-opkg install python3-requests python3-beautifulsoup4 python3-six > /dev/null 2>&1
+echo "[+] Installing Required Libraries..."
+opkg update
+opkg install python3-requests python3-beautifulsoup4 python3-xml python3-html
 
-echo "----------------------------------------------"
-echo "Done! Restarting Enigma2 now..."
-echo "----------------------------------------------"
+echo "[+] Checking for errors..."
+python3 -m py_compile "$PLUGIN_DIR/plugin.py"
 
+echo "[+] Restarting Enigma2..."
 killall -9 enigma2
