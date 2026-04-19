@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Modified by Muhammad - Feed Hunter Project
 
 from Plugins.Plugin import PluginDescriptor
 from Screens.Screen import Screen
@@ -6,25 +7,25 @@ from Components.ActionMap import ActionMap
 from Components.Label import Label
 from Components.MenuList import MenuList
 from Components.NimManager import nimmanager
-from enigma import eTimer, gFont, RT_HALIGN_LEFT, RT_VALIGN_CENTER
+from enigma import eTimer, gFont, RT_HALIGN_LEFT, RT_VALIGN_CENTER, eListboxPythonMultiContent
 import re
 import threading
 import urllib.request as urllib2
 
-# دالة تنسيق السطر الواحد المحدثة لتشمل الوقت
+# دالة تنسيق السطر الواحد المحدثة لتعمل مع MultiContent بدون Crash
 def FeedListEntry(sat, freq, pol, sr, category, enc, info, added_time):
     res = [(sat, freq, pol, sr)] 
     
     # السطر الأول: القمر (باللون الأصفر)
-    res.append((sat, 10, 2, 800, 25, 0, RT_HALIGN_LEFT, 0xF0CA00))
+    res.append((eListboxPythonMultiContent.TYPE_TEXT, 10, 2, 800, 25, 0, RT_HALIGN_LEFT, sat, 0xF0CA00))
     
     # السطر الثاني: التردد والقطبية والترميز والتصنيف
     detail_text = f"Freq: {freq} - Pol: {pol} - SR: {sr} - Category: {category}"
-    res.append((detail_text, 10, 27, 800, 25, 1, RT_HALIGN_LEFT))
+    res.append((eListboxPythonMultiContent.TYPE_TEXT, 10, 27, 800, 25, 1, RT_HALIGN_LEFT, detail_text))
     
     # السطر الثالث: وقت الإضافة والتشفير والمعلومات الإضافية
     extra_text = f"[{added_time}]  {enc}  ℹ {info}"
-    res.append((extra_text, 10, 52, 800, 25, 1, RT_HALIGN_LEFT, 0xAAAAAA))
+    res.append((eListboxPythonMultiContent.TYPE_TEXT, 10, 52, 800, 25, 1, RT_HALIGN_LEFT, extra_text, 0xAAAAAA))
     
     return res
 
@@ -46,15 +47,23 @@ class FeedHunter(Screen):
         
         self["status_label"] = Label("جاري جلب البيانات التفصيلية...")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
-            "ok": self.startScan, "cancel": self.close, "red": self.close, "green": self.reloadData
+            "ok": self.startScan, 
+            "cancel": self.close, 
+            "red": self.close, 
+            "green": self.reloadData
         }, -1)
         
         self.timer = eTimer()
-        self.timer.timeout.connect(self.updateUI)
+        try:
+            self.timer.timeout.connect(self.updateUI)
+        except:
+            self.timer.callback.append(self.updateUI)
+            
         self.onLayoutFinish.append(self.reloadData)
 
     def reloadData(self):
         self.feeds_data = []
+        self["status_label"].setText("جاري تحديث البيانات من Satelliweb...")
         threading.Thread(target=self.fetchData).start()
 
     def fetchData(self):
@@ -85,16 +94,18 @@ class FeedHunter(Screen):
                         cat_m = re.search(r'Category:\s*</b>\s*([^<]+)', block)
                         category = cat_m.group(1).strip() if cat_m else "General"
                         
-                        # استخراج ما بعد Transmitted in مباشرة (التشفير والنوع)
+                        # استخراج التشفير
                         enc_m = re.search(r'Transmitted in:\s*([^<]+)', block)
                         enc = enc_m.group(1).strip() if enc_m else "Clear"
                         
-                        # استخراج المعلومات الإضافية (ℹ)
+                        # استخراج المعلومات الإضافية
                         info_m = re.search(r'ℹ\s*(?:</b>)?\s*([^<]+)', block)
                         info = info_m.group(1).strip() if info_m else ""
 
                         new_list.append(FeedListEntry(sat_name, freq, pol, sr, category, enc, info, added_time))
-        except: pass
+        except Exception as e:
+            print("FeedHunter Error:", str(e))
+            
         self.feeds_data = new_list
         self.timer.start(100, True)
 
@@ -105,7 +116,9 @@ class FeedHunter(Screen):
     def startScan(self):
         sel = self["list"].getCurrent()
         if not sel: return
-        sat_name, freq, pol, sr = sel[0]
+        # استخراج البيانات من العنصر الأول في الـ tuple (المخفي)
+        sat_data = sel[0]
+        sat_name, freq, pol, sr = sat_data
         
         orb_pos = 70 
         orb_m = re.search(r"(\d+\.?\d*)", sat_name)
@@ -120,14 +133,29 @@ class FeedHunter(Screen):
                 break
         
         if tuner_slot != -1:
-            tp = {"type": "S2", "frequency": int(freq)*1000, "symbol_rate": int(sr)*1000,
-                  "polarization": 0 if pol == "H" else 1, "fec_inner": 0, "system": 1,
-                  "modulation": 2, "inversion": 2, "roll_off": 3, "pilot": 2, "orbital_position": orb_pos}
+            tp = {
+                "type": "S2", 
+                "frequency": int(freq)*1000, 
+                "symbol_rate": int(sr)*1000,
+                "polarization": 0 if pol == "H" else 1, 
+                "fec_inner": 0, "system": 1,
+                "modulation": 2, "inversion": 2, 
+                "roll_off": 3, "pilot": 2, 
+                "orbital_position": orb_pos
+            }
             try:
                 from Screens.ServiceScan import ServiceScan
                 self.session.open(ServiceScan, tuner_slot, transponder=tp, scanList=[tp])
-            except: pass
+            except:
+                self["status_label"].setText("خطأ في تشغيل البحث")
 
-def main(session, **kwargs): session.open(FeedHunter)
+def main(session, **kwargs): 
+    session.open(FeedHunter)
+
 def Plugins(**kwargs):
-    return PluginDescriptor(name="Feed Hunter", description="Detailed Feeds View (PY3)", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main)
+    return PluginDescriptor(
+        name="Feed Hunter", 
+        description="Detailed Feeds View (PY3)", 
+        where=PluginDescriptor.WHERE_PLUGINMENU, 
+        fnc=main
+    )
