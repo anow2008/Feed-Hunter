@@ -1,44 +1,33 @@
 #!/bin/sh
+# Feed Hunter Installer - Created by Muhammad
 
-# مسارات
-TARGET="/usr/lib/enigma2/python/Plugins/Extensions/FeedHunter"
-URL="https://github.com/anow2008/Feed-Hunter/archive/refs/heads/main.zip"
+# المسارات
+PLUGIN_PATH="/usr/lib/enigma2/python/Plugins/Extensions/FeedHunter"
+GITHUB_RAW="https://raw.githubusercontent.com/anow2008/Feed-Hunter/main"
 
-echo "Checking System..."
+echo "> جاري تثبيت بلجن Feed Hunter..."
 
-# 1. تنظيف عميق جداً
-rm -rf $TARGET
-rm -rf /tmp/Feed-Hunter-main
-rm -f /tmp/fh.zip
+# حذف النسخة القديمة إن وجدت لضمان تحديث نظيف
+rm -rf $PLUGIN_PATH
+mkdir -p $PLUGIN_PATH
 
-# 2. التحميل
-echo "Downloading..."
-wget --no-check-certificate "$URL" -O /tmp/fh.zip
+# تحميل الملفات الأساسية
+echo "> جاري تحميل الملفات من المستودع..."
+wget --no-check-certificate "$GITHUB_RAW/plugin.py" -O "$PLUGIN_PATH/plugin.py"
+wget --no-check-certificate "$GITHUB_RAW/__init__.py" -O "$PLUGIN_PATH/__init__.py"
 
-# 3. فك الضغط
-echo "Unzipping..."
-unzip -o /tmp/fh.zip -d /tmp/
+# تأكد من إضافة أي ملفات أخرى (مثل الصور أو ملفات الـ XML) هنا بنفس الطريقة
+# wget --no-check-certificate "$GITHUB_RAW/key.png" -O "$PLUGIN_PATH/key.png"
 
-# 4. النقل الذكي (هنا القفلة)
-# هندور على الفولدر اللي جواه plugin.py وننقله مهما كان مكانه
-SOURCE_PATH=$(find /tmp/Feed-Hunter-main -name "plugin.py" | head -n 1 | xargs dirname)
+# إعطاء صلاحيات التشغيل
+chmod -R 755 $PLUGIN_PATH
 
-if [ -n "$SOURCE_PATH" ]; then
-    echo "Found plugin at $SOURCE_PATH, moving..."
-    mkdir -p $TARGET
-    cp -rp "$SOURCE_PATH"/. $TARGET/
-else
-    echo "Plugin files not found in /tmp!"
-fi
+echo "> تم التثبيت بنجاح في: $PLUGIN_PATH"
+echo "> جاري إعادة تشغيل Enigma2 لتفعيل البلجن..."
 
-# 5. الصلاحيات
-chmod -R 755 $TARGET
+# إعادة تشغيل الواجهة
+init 4
+sleep 2
+init 3
 
-# 6. الريستارت الإجباري (بأكثر من طريقة)
-echo "Forcing Restart..."
-sync
-# جرب يرستر الواجهة
-killall -9 enigma2
-# لو منفعش، جرب يرستر الجهاز كله بعد 3 ثواني
-sleep 3
-reboot
+exit 0
