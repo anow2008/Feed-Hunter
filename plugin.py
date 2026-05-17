@@ -5,7 +5,9 @@ from Plugins.Plugin import PluginDescriptor
 from Screens.Screen import Screen
 from Components.ActionMap import ActionMap
 from Components.Label import Label
+from Components.Components import Components
 from Components.MenuList import MenuList
+from Components.List import List  # تم استيراد List لدعم الـ MultiContent بشكل صحيح
 from Components.NimManager import nimmanager
 from enigma import eTimer, gFont, RT_HALIGN_LEFT, RT_VALIGN_CENTER, eListboxPythonMultiContent
 import re
@@ -14,7 +16,9 @@ import urllib.request as urllib2
 
 # دالة تنسيق السطر الواحد المحدثة لتعمل مع MultiContent بدون Crash
 def FeedListEntry(sat, freq, pol, sr, category, enc, info, added_time):
-    res = [(sat, freq, pol, sr)] 
+    # العنصر الأول هو الـ Tuple اللي بنحتاجه وقت الضغط على الـ OK لاستخراج البيانات
+    # العناصر التالية هي المكونات المرئية التي ستظهر على الشاشة
+    res = [ (sat, freq, pol, sr) ] 
     
     # السطر الأول: القمر (باللون الأصفر)
     res.append((eListboxPythonMultiContent.TYPE_TEXT, 10, 2, 800, 25, 0, RT_HALIGN_LEFT, sat, 0xF0CA00))
@@ -40,7 +44,10 @@ class FeedHunter(Screen):
 
     def __init__(self, session):
         Screen.__init__(self, session)
-        self["list"] = MenuList([])
+        
+        # تم تغيير MenuList إلى List لتفادي كراش الـ MultiContent ولعرض البيانات بشكل صحيح
+        self["list"] = List([])
+        self["list"].style = "multicontent"
         self["list"].l.setFont(0, gFont("Regular", 22))
         self["list"].l.setFont(1, gFont("Regular", 18))
         self["list"].l.setItemHeight(80) 
@@ -110,15 +117,22 @@ class FeedHunter(Screen):
         self.timer.start(100, True)
 
     def updateUI(self):
+        # استخدام setList المناسب للـ Components.List
         self["list"].setList(self.feeds_data)
         self["status_label"].setText(f"تم تحديث {len(self.feeds_data)} فيد بنجاح")
 
     def startScan(self):
         sel = self["list"].getCurrent()
         if not sel: return
-        # استخراج البيانات من العنصر الأول في الـ tuple (المخفي)
-        sat_data = sel[0]
-        sat_name, freq, pol, sr = sat_data
+        
+        # عند استخدام List مع الـ MultiContent، العنصر الحالي المرتجع يكون Tuple يحتوي على البيانات الأصلية
+        # وفي حالتنا sel[0] يحتوي على الـ Tuple الداخلي (sat, freq, pol, sr)
+        try:
+            sat_data = sel[0]
+            sat_name, freq, pol, sr = sat_data
+        except Exception as e:
+            print("FeedHunter Scan Error parsing current item:", str(e))
+            return
         
         orb_pos = 70 
         orb_m = re.search(r"(\d+\.?\d*)", sat_name)
